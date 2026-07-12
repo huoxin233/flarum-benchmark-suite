@@ -1,0 +1,784 @@
+name: Flarum Performance Benchmark
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      flarum-version:
+        description: 'Flarum Versions (JSON Array)'
+        required: true
+        default: '["v1.8.0", "v2.x-dev"]'
+        type: string
+      database:
+        description: 'Database Engines (JSON Array)'
+        required: true
+        default: '["mysql:8.4", "mariadb:11.4"]'
+        type: string
+      php-version:
+        description: 'PHP Versions (JSON Array)'
+        required: true
+        default: '["8.3"]'
+        type: string
+      test-extensions:
+        description: 'Third-party Ext (JSON Array)'
+        required: true
+        default: '[""]'
+        type: string
+      core-extensions:
+        description: 'Enable Core Extensions (JSON Array)'
+        required: true
+        default: '["true"]'
+        type: string
+      debug-mode:
+        description: 'Debug Mode (JSON Array)'
+        required: true
+        default: '["false"]'
+        type: string
+      opcache:
+        description: 'Enable OPcache (JSON Array)'
+        required: true
+        default: '["false"]'
+        type: string
+      targets:
+        description: 'Targets (JSON Array)'
+        required: true
+        default: '["/api/discussions"]'
+        type: string
+      body:
+        description: 'JSON Body (POST/PATCH)'
+        required: false
+        type: string
+      iterations:
+        description: 'Iterations per test'
+        required: true
+        default: '5'
+        type: string
+      show-response:
+        description: 'Print JSON Response'
+        required: false
+        default: false
+        type: boolean
+      clear-cache:
+        description: 'Clear App Cache per iter'
+        required: false
+        default: true
+        type: boolean
+      warmup:
+        description: 'Run a Warmup iteration (Not Counted)'
+        required: false
+        default: true
+        type: boolean
+      users:
+        description: 'Number of Users'
+        required: true
+        default: '50'
+        type: string
+      discussions:
+        description: 'Number of Discussions'
+        required: true
+        default: '50'
+        type: string
+      posts:
+        description: 'Number of Posts'
+        required: true
+        default: '1000'
+        type: string
+      custom-matrix:
+        description: 'Advanced: Custom Matrix Override (JSON)'
+        required: false
+        type: string
+      vcs-repos:
+        description: 'Advanced: VCS Overrides (JSON Object)'
+        required: false
+        type: string
+      deploy-dashboard:
+        description: 'Deploy to GitHub Pages'
+        required: false
+        default: true
+        type: boolean
+      clear-history:
+        description: 'Wipe all historical data before this run'
+        required: false
+        default: false
+        type: boolean
+      use-repo-vars:
+        description: 'Override inputs with Repository Variables (vars.*)'
+        required: false
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      flarum-version:
+        description: 'Flarum Versions (JSON Array)'
+        required: false
+        default: '["v1.8.0", "v2.x-dev"]'
+        type: string
+      database:
+        description: 'Database Engines (JSON Array)'
+        required: false
+        default: '["mysql:8.4", "mariadb:11.4"]'
+        type: string
+      php-version:
+        description: 'PHP Versions (JSON Array)'
+        required: false
+        default: '["8.3"]'
+        type: string
+      test-extensions:
+        description: 'Third-party Ext (JSON Array)'
+        required: false
+        default: '[""]'
+        type: string
+      core-extensions:
+        description: 'Enable Core Extensions (JSON Array)'
+        required: false
+        default: '["true"]'
+        type: string
+      debug-mode:
+        description: 'Debug Mode (JSON Array)'
+        required: false
+        default: '["false"]'
+        type: string
+      opcache:
+        description: 'Enable OPcache (JSON Array)'
+        required: false
+        default: '["false"]'
+        type: string
+      targets:
+        description: 'Targets (JSON Array)'
+        required: false
+        default: '["/api/discussions"]'
+        type: string
+      body:
+        description: 'JSON Body (POST/PATCH)'
+        required: false
+        type: string
+      iterations:
+        description: 'Iterations per test'
+        required: false
+        default: '5'
+        type: string
+      show-response:
+        description: 'Print JSON Response'
+        required: false
+        default: false
+        type: boolean
+      clear-cache:
+        description: 'Clear App Cache per iter'
+        required: false
+        default: true
+        type: boolean
+      warmup:
+        description: 'Run a Warmup iteration (Not Counted)'
+        required: false
+        default: true
+        type: boolean
+      users:
+        description: 'Number of Users'
+        required: false
+        default: '50'
+        type: string
+      discussions:
+        description: 'Number of Discussions'
+        required: false
+        default: '50'
+        type: string
+      posts:
+        description: 'Number of Posts'
+        required: false
+        default: '1000'
+        type: string
+      custom-matrix:
+        description: 'Advanced: Custom Matrix Override (JSON)'
+        required: false
+        type: string
+      vcs-repos:
+        description: 'Advanced: VCS Overrides (JSON Object)'
+        required: false
+        type: string
+      deploy-dashboard:
+        description: 'Deploy to GitHub Pages'
+        required: false
+        default: true
+        type: boolean
+      use-repo-vars:
+        description: 'Override inputs with Repository Variables (vars.*)'
+        required: false
+        default: true
+        type: boolean
+      clear-history:
+        description: 'Wipe all historical data before this run'
+        required: false
+        default: false
+        type: boolean
+
+
+permissions:
+  contents: write
+
+jobs:
+  setup-matrix:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[benchmark]')
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        env:
+          CUSTOM: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CUSTOM_MATRIX) || inputs.custom-matrix }}
+          PHP_VER: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_PHP_VERSION) || inputs.php-version || '["8.3"]' }}
+          FLARUM_VER: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_FLARUM_VERSION) || inputs.flarum-version || '["v1.8.0", "v2.x-dev"]' }}
+          DB: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_DATABASE) || inputs.database || '["mysql:8.4", "mariadb:11.4"]' }}
+          DEBUG: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_DEBUG_MODE) || inputs.debug-mode || '["false"]' }}
+          OPCACHE: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_OPCACHE) || inputs.opcache || '["false"]' }}
+          CORE_EXT: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CORE_EXTENSIONS) || inputs.core-extensions || '["true"]' }}
+          TEST_EXT: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_TEST_EXTENSIONS) || inputs.test-extensions || '[""]' }}
+          ENDPOINT: ${{ (inputs.use-repo-vars == true && (vars.BENCHMARK_TARGETS || vars.BENCHMARK_ENDPOINT)) || inputs.targets || inputs.endpoint || '["/api/discussions"]' }}
+        run: |
+          EOF_DELIM=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          
+          MATRIX_JSON=""
+          if [ -n "$CUSTOM" ]; then
+            MATRIX_JSON="$CUSTOM"
+          else
+            # Safely construct JSON using jq to prevent quote escaping issues
+            MATRIX_JSON=$(jq -n \
+              --argjson php "$PHP_VER" \
+              --argjson flarum "$FLARUM_VER" \
+              --argjson db "$DB" \
+              --argjson debug "$DEBUG" \
+              --argjson core "$CORE_EXT" \
+              --argjson test "$TEST_EXT" \
+              --argjson opcache "$OPCACHE" \
+              --argjson target "$ENDPOINT" \
+              '{
+                include: [
+                  $php[] as $p | $flarum[] as $f | $db[] as $d | $debug[] as $dbg | $core[] as $c | $test[] as $t | $opcache[] as $o | $target[] as $tgt | {
+                    "flarum-version": $f,
+                    "database": $d,
+                    "php-version": $p,
+                    "debug": $dbg,
+                    "core-extensions": $c,
+                    "test-exts": $t,
+                    "opcache": $o,
+                    "target_type": (if ($tgt | type) == "string" then "api" elif $tgt.api then "api" elif $tgt.sql then "sql" else "php" end),
+                    "target_value": (if ($tgt | type) == "string" then $tgt elif $tgt.api then $tgt.api elif $tgt.sql then $tgt.sql else $tgt.php end),
+                    "target_name": (if ($tgt | type) == "string" then $tgt elif $tgt.name then $tgt.name elif $tgt.api then $tgt.api elif $tgt.sql then "sql-query" else "php-code" end),
+                    "setup_sql": (if ($tgt | type) == "object" then ($tgt."setup-sql" // "") else "" end),
+                    "setup_php": (if ($tgt | type) == "object" then ($tgt."setup-php" // "") else "" end)
+                  }
+                ]
+              }')
+          fi
+          
+          echo "### 🧮 Executing Benchmark Matrix" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo "$MATRIX_JSON" | jq . >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "matrix<<$EOF_DELIM" >> $GITHUB_OUTPUT
+          echo "$MATRIX_JSON" >> $GITHUB_OUTPUT
+          echo "$EOF_DELIM" >> $GITHUB_OUTPUT
+
+  benchmark:
+    name: Bench [${{ matrix.flarum-version }} | ${{ matrix.database }} | PHP ${{ matrix.php-version }} | Dbg:${{ matrix.debug }} | Core:${{ matrix.core-extensions }} | Ext:${{ matrix.test-exts || 'none' }} | OP:${{ matrix.opcache }}] - ${{ matrix.target_name || matrix.endpoint }}
+    needs: setup-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup-matrix.outputs.matrix) }}
+
+
+    steps:
+      - name: Start Database Container
+        if: matrix.database != 'sqlite'
+        run: |
+          if [[ "${{ matrix.database }}" == *"postgres"* ]] || [[ "${{ matrix.database }}" == *"pgsql"* ]]; then
+             docker run -d --name db -e POSTGRES_PASSWORD=root -e POSTGRES_USER=postgres -e POSTGRES_DB=flarum -p 5432:5432 --tmpfs /var/lib/postgresql/data:rw ${{ matrix.database }}
+             echo "Waiting for PostgreSQL..."
+             until docker exec db pg_isready -U postgres; do sleep 1; done
+          else
+             docker run -d --name db -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=flarum -p 3306:3306 --tmpfs /var/lib/mysql:rw ${{ matrix.database }}
+             echo "Waiting for MySQL/MariaDB..."
+             until docker exec db sh -c 'if command -v mariadb-admin > /dev/null; then mariadb-admin ping -h 127.0.0.1 -uroot -proot --silent; else mysqladmin ping -h 127.0.0.1 -uroot -proot --silent; fi'; do sleep 1; done
+          fi
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: dom, curl, libxml, mbstring, zip, pdo, mysql, pdo_mysql, sqlite3, pdo_sqlite, pgsql, pdo_pgsql
+          coverage: none
+          ini-values: opcache.enable_cli=${{ matrix.opcache == 'true' && '1' || '0' }}, memory_limit=512M
+
+      - name: Download Flarum Core
+        run: composer create-project flarum/flarum flarum-app ${{ matrix.flarum-version }}
+
+      - name: Register VCS Repositories
+        if: inputs.vcs-repos != '' && inputs.vcs-repos != '{}'
+        working-directory: ./flarum-app
+        run: |
+          echo '${{ inputs.vcs-repos }}' | jq -r 'to_entries | .[] | .key + " " + .value' | while read -r name url; do
+            safe_name=$(echo "$name" | tr '/' '-')
+            composer config repositories.$safe_name vcs "$url"
+            echo "Registered VCS: $name -> $url"
+          done
+
+      - name: Install Benchmark Tool
+        working-directory: ./flarum-app
+        run: composer require huoxin/benchmark-tool:"*"
+
+      - name: Require Third-Party Extensions
+        if: matrix.test-exts != '' && matrix.test-exts != 'none'
+        working-directory: ./flarum-app
+        run: composer require $(echo "${{ matrix.test-exts }}" | tr ',' ' ')
+
+      - name: Setup Database Config
+        working-directory: ./flarum-app
+        run: |
+          DB_DRIVER="mysql"
+          DB_PORT=3306
+          DB_USER="root"
+          
+          if [[ "${{ matrix.database }}" == *"mariadb"* ]]; then
+            if [[ "${{ matrix.flarum-version }}" == *"v2"* ]]; then
+              DB_DRIVER="mariadb"
+            else
+              DB_DRIVER="mysql"
+            fi
+          elif [[ "${{ matrix.database }}" == *"postgres"* ]] || [[ "${{ matrix.database }}" == *"pgsql"* ]]; then
+            DB_DRIVER="pgsql"
+            DB_PORT=5432
+            DB_USER="postgres"
+          elif [[ "${{ matrix.database }}" == "sqlite" ]]; then
+            DB_DRIVER="sqlite"
+            touch /dev/shm/database.sqlite
+          fi
+          
+          # Dynamically fetch all Flarum core extensions to avoid hardcoding
+          CORE_EXTS=$(php -r '$installed = json_decode(file_get_contents("vendor/composer/installed.json"), true); $packages = $installed["packages"] ?? $installed; $exts = []; foreach ($packages as $pkg) { if (($pkg["type"] ?? "") === "flarum-extension" && strpos($pkg["name"], "flarum/") === 0) { $exts[] = preg_replace("/^flarum-ext-/", "flarum-", str_replace("/", "-", $pkg["name"])); } } echo implode(",", $exts);')
+          
+          if [ "${{ matrix.core-extensions }}" == "true" ]; then
+            ENABLED_EXTENSIONS="$CORE_EXTS,huoxin-benchmark-tool"
+          else
+            ENABLED_EXTENSIONS="huoxin-benchmark-tool"
+          fi
+          
+          if [ "${{ matrix.test-exts }}" != "" ] && [ "${{ matrix.test-exts }}" != "none" ]; then
+            for ext in $(echo "${{ matrix.test-exts }}" | tr ',' ' '); do
+              TEST_EXT_ID=$(echo "$ext" | cut -d':' -f1 | sed 's/\//-/' | sed 's/^flarum-ext-/flarum-/')
+              ENABLED_EXTENSIONS="$ENABLED_EXTENSIONS,$TEST_EXT_ID"
+            done
+          fi
+          
+          if [ "$DB_DRIVER" == "sqlite" ]; then
+            cat <<EOF > install.yml
+          debug: ${{ matrix.debug }}
+          extensions: '$ENABLED_EXTENSIONS'
+          url: 'http://localhost'
+          adminUser: 'admin'
+          adminPassword: 'password'
+          adminEmail: 'admin@example.com'
+          databaseConfiguration:
+            driver: 'sqlite'
+            database: '/dev/shm/database.sqlite'
+          EOF
+          else
+            cat <<EOF > install.yml
+          debug: ${{ matrix.debug }}
+          extensions: '$ENABLED_EXTENSIONS'
+          url: 'http://localhost'
+          adminUser: 'admin'
+          adminPassword: 'password'
+          adminEmail: 'admin@example.com'
+          databaseConfiguration:
+            driver: '$DB_DRIVER'
+            host: '127.0.0.1'
+            port: $DB_PORT
+            database: 'flarum'
+            username: '$DB_USER'
+            password: 'root'
+          EOF
+          fi
+          
+          # Run the Flarum installer
+          php flarum install --file=install.yml
+
+      - name: Show Flarum Info
+        working-directory: ./flarum-app
+        run: |
+          # Run once and capture to variable to avoid executing twice
+          INFO=$(php flarum info)
+          echo "$INFO"
+          
+          # Append to Step Summary inside a collapsible details block
+          echo "<details><summary>🛠️ View Flarum Environment Details</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          echo "$INFO" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Run Benchmark
+        working-directory: ./flarum-app
+        run: |
+          BODY="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_BODY) || inputs.body || '' }}"
+          USERS="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_USERS) || inputs.users || '50' }}"
+          DISCUSSIONS="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_DISCUSSIONS) || inputs.discussions || '50' }}"
+          POSTS="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_POSTS) || inputs.posts || '1000' }}"
+          ITERATIONS="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_ITERATIONS) || inputs.iterations || '5' }}"
+          SHOW_RESPONSE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_SHOW_RESPONSE) || inputs.show-response || 'false' }}"
+          CLEAR_CACHE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CLEAR_CACHE) || inputs.clear-cache || 'true' }}"
+          WARMUP="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_WARMUP) || inputs.warmup || 'true' }}"
+          
+          TARGET_TYPE="${{ matrix.target_type || 'api' }}"
+          TARGET_VALUE="${{ matrix.target_value || matrix.endpoint }}"
+          TARGET_NAME="${{ matrix.target_name || matrix.endpoint }}"
+          SETUP_SQL="${{ matrix.setup_sql || '' }}"
+          SETUP_PHP="${{ matrix.setup_php || '' }}"
+          
+          BENCHMARK_SQL=""
+          BENCHMARK_PHP=""
+          API_ENDPOINT=""
+          
+          if [ "$TARGET_TYPE" == "sql" ]; then
+            BENCHMARK_SQL="$TARGET_VALUE"
+          elif [ "$TARGET_TYPE" == "php" ]; then
+            BENCHMARK_PHP="$TARGET_VALUE"
+          else
+            API_ENDPOINT="$TARGET_VALUE"
+          fi
+          
+          EXTRA_FLAGS=""
+          if [ "$SHOW_RESPONSE" == "true" ]; then
+            EXTRA_FLAGS="--show-response"
+          fi
+          if [ "$CLEAR_CACHE" == "true" ]; then
+            EXTRA_FLAGS="$EXTRA_FLAGS --clear-cache"
+          fi
+          if [ "$WARMUP" == "true" ]; then
+            EXTRA_FLAGS="$EXTRA_FLAGS --warmup"
+          fi
+          
+          SAFE_DB=$(echo "${{ matrix.database }}" | tr ':' '-')
+          SAFE_TEST_EXT=$(echo "${{ matrix.test-exts }}" | tr '/:' '-' | tr ',' '_')
+          SAFE_TARGET=$(echo "$TARGET_NAME" | tr '/:?&=' '-')
+          RESULT_FILE="benchmark-result-${{ matrix.flarum-version }}_${SAFE_DB}_debug-${{ matrix.debug }}_core-${{ matrix.core-extensions }}_testexts-${SAFE_TEST_EXT}_opcache-${{ matrix.opcache }}_target-${SAFE_TARGET}.json"
+          
+          # 1. Run Benchmark ONCE (Outputs Terminal Table to console + saves raw JSON to file)
+          php flarum benchmark:run \
+            --endpoint="$API_ENDPOINT" \
+            --body="$BODY" \
+            --seed-users="$USERS" \
+            --seed-discussions="$DISCUSSIONS" \
+            --seed-posts="$POSTS" \
+            --iterations="$ITERATIONS" \
+            --setup-sql="$SETUP_SQL" \
+            --setup-php="$SETUP_PHP" \
+            --benchmark-sql="$BENCHMARK_SQL" \
+            --benchmark-php="$BENCHMARK_PHP" \
+            --json-out="$RESULT_FILE" \
+            $EXTRA_FLAGS
+            
+          # 2. Parse the JSON to generate the Markdown Summary for GitHub Actions UI
+          cat << 'EOF' > generate-summary.php
+          <?php
+          $file = $argv[1];
+          $data = json_decode(file_get_contents($file), true);
+          
+          $x = []; $yTime = []; $yQuery = [];
+          foreach ($data['iterations'] as $r) {
+              $x[] = $r['iteration'];
+              $yTime[] = round($r['time_ms'], 1);
+              $yQuery[] = round($r['query_time_ms'], 1);
+          }
+          
+          $xAxis = implode(', ', $x);
+          $yAxisTime = implode(', ', $yTime);
+          $yAxisQuery = implode(', ', $yQuery);
+          $countRuns = count($data['iterations']);
+          
+          $lastIter = end($data['iterations']);
+          $slowestQueriesMarkdown = "";
+          $nPlusOneMarkdown = "";
+          $queryBreakdown = ['SELECT' => 0, 'INSERT' => 0, 'UPDATE' => 0, 'DELETE' => 0, 'OTHER' => 0];
+          
+          if (!empty($lastIter['queries'])) {
+              $queries = $lastIter['queries'];
+              
+              // 1. Calculate Breakdown & N+1
+              $queryCounts = [];
+              foreach ($queries as $q) {
+                  $sql = trim($q['sql']);
+                  $type = strtoupper(explode(' ', $sql)[0]);
+                  if (isset($queryBreakdown[$type])) {
+                      $queryBreakdown[$type]++;
+                  } else {
+                      $queryBreakdown['OTHER']++;
+                  }
+                  
+                  if (!isset($queryCounts[$sql])) {
+                      $queryCounts[$sql] = 0;
+                  }
+                  $queryCounts[$sql]++;
+              }
+              
+              // Sort N+1 by count descending
+              arsort($queryCounts);
+              $duplicates = array_filter($queryCounts, function($c) { return $c > 1; });
+              if (!empty($duplicates)) {
+                  $nPlusOneMarkdown = "\n<details><summary>🚨 View Potential N+1 Queries (".count($duplicates)." found)</summary>\n\n```sql\n";
+                  foreach (array_slice($duplicates, 0, 10) as $sql => $count) {
+                      $nPlusOneMarkdown .= "-- [Executed {$count} times!]\n{$sql}\n\n";
+                  }
+                  $nPlusOneMarkdown .= "```\n</details>\n";
+              }
+              
+              // 2. Slowest Queries
+              usort($queries, function($a, $b) { return $b['time'] <=> $a['time']; });
+              $slowest = array_slice($queries, 0, 5);
+              $slowestQueriesMarkdown = "\n<details><summary>🐌 View Top 5 Slowest Database Queries</summary>\n\n```sql\n";
+              foreach ($slowest as $q) {
+                  $slowestQueriesMarkdown .= "-- [{$q['time']}ms]\n{$q['sql']}\n\n";
+              }
+              $slowestQueriesMarkdown .= "```\n</details>\n";
+          }
+          
+          $mermaid = <<<MD
+          ### 🚀 Single Server Iteration Test: `{$data['endpoint']}`
+
+          ```mermaid
+          %%{init: { "theme": "default", "themeVariables": { "xyChart": { "plotColorPalette": "#3b82f6,#ef4444" } } } }%%
+          xychart-beta
+              title "Execution Time over Iterations (ms)"
+              x-axis "Iteration Number" [$xAxis]
+              y-axis "Time (ms)"
+              bar [$yAxisTime]
+              line [$yAxisQuery]
+          ```
+          
+          *(📊 Blue Bar: Total API Response Time | 🔴 Red Line: Time Spent in Database)*
+
+          | Performance Metric | Average (across $countRuns runs) |
+          |--------|-------|
+          | ⏱️ Total API Response Time | **{$data['avg_time_ms']} ms** |
+          | 🗄️ Database Queries Executed | **{$data['avg_queries']}** (Select: {$queryBreakdown['SELECT']} / Insert: {$queryBreakdown['INSERT']} / Update: {$queryBreakdown['UPDATE']}) |
+          | ⏳ Time Spent in Database | **{$data['avg_query_time_ms']} ms** |
+          | 🧠 Peak PHP Memory Usage | **{$data['avg_memory_mb']} MB** |
+          | ⚙️ Time Spent Executing PHP | **{$data['avg_php_cpu_time_ms']} ms** |
+          
+          {$nPlusOneMarkdown}
+          {$slowestQueriesMarkdown}
+          MD;
+          
+          file_put_contents(getenv('GITHUB_STEP_SUMMARY'), $mermaid . "\n", FILE_APPEND);
+          EOF
+          
+          php generate-summary.php "$RESULT_FILE"
+
+      - name: Upload Results Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ strategy.job-index }}
+          path: ./flarum-app/benchmark-result-*.json
+          retention-days: 1
+
+  aggregate-report:
+    needs: benchmark
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Checkout previous gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: previous-gh-pages
+        continue-on-error: true
+
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: benchmark-results-*
+          merge-multiple: true
+          path: results
+
+      - name: Generate Master Comparison Graph
+        env:
+          CLEAR_HISTORY: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CLEAR_HISTORY) || inputs.clear-history || 'false' }}
+        run: |
+          echo "### 🏆 Flarum Version Comparison Summary" >> $GITHUB_STEP_SUMMARY
+          
+          # Use PHP to parse the JSON files and generate the master Mermaid bar chart
+          cat << 'EOF' > generate.php
+          <?php
+          $files = glob("results/*.json");
+          if (empty($files)) {
+              echo "No results found.\n";
+              exit(0);
+          }
+          
+          $labels = [];
+          $times = [];
+          $queryTimes = [];
+          $memories = [];
+          
+          echo "| ID | Flarum | DB Engine | Target | Avg Time | Avg DB Queries | Peak Memory |\n";
+          echo "|----|--------|-----------|--------|----------|----------------|-------------|\n";
+          
+          $id = 1;
+          foreach ($files as $file) {
+              $data = json_decode(file_get_contents($file), true);
+              $name = str_replace(['results/benchmark-result-', '.json'], '', $file);
+              
+              $parts = explode('_', $name);
+              $flarum = $parts[0] ?? 'Unknown';
+              $db = $parts[1] ?? 'Unknown';
+              $debugState = str_replace('debug-', '', $parts[2] ?? 'false');
+              $coreState = str_replace('core-', '', $parts[3] ?? 'true');
+              $testExtState = str_replace('testexts-', '', $parts[4] ?? '');
+              $opcacheState = str_replace('opcache-', '', $parts[5] ?? 'false');
+              $targetState = str_replace(['target-', '.json'], '', $parts[6] ?? 'Unknown');
+              
+              $debugLabel = $debugState === 'true' ? ' (Debug)' : '';
+              $coreLabel = $coreState === 'false' ? ' (Naked)' : '';
+              $opcacheLabel = $opcacheState === 'true' ? ' (OPcache)' : '';
+              
+              $extString = str_replace('_', ', ', $testExtState);
+              $testExtLabel = $testExtState !== '' ? " (+{$extString})" : '';
+              
+              // Use a short ID (R1, R2...) for Mermaid to prevent X-axis overlapping
+              $shortLabel = "R" . $id;
+              
+              $labels[] = '"' . $shortLabel . '"';
+              $times[] = $data['avg_time_ms'];
+              $queryTimes[] = $data['avg_query_time_ms'];
+              $memories[] = $data['avg_memory_mb'];
+              
+              echo "| **{$shortLabel}** | `{$flarum}{$debugLabel}{$coreLabel}{$testExtLabel}{$opcacheLabel}` | `{$db}` | `{$targetState}` | **{$data['avg_time_ms']} ms** | {$data['avg_queries']} | {$data['avg_memory_mb']} MB |\n";
+              
+              $id++;
+          }
+          
+          $x = implode(', ', $labels);
+          $y = implode(', ', $times);
+          $yQ = implode(', ', $queryTimes);
+          $yMem = implode(', ', $memories);
+          
+          $maxTime = ceil(max(array_merge($times, $queryTimes)) * 1.15);
+          $maxMem = ceil(max($memories) * 1.15);
+          
+          $mermaid = <<<MD
+
+          ```mermaid
+          %%{init: { "theme": "default", "themeVariables": { "xyChart": { "plotColorPalette": "#3b82f6,#ef4444" } } } }%%
+          xychart-beta
+              title "Total Response Time vs DB Query Time (ms)"
+              x-axis [$x]
+              y-axis "Time (ms)" 0 --> $maxTime
+              bar [$y]
+              line [$yQ]
+          ```
+          *(📊 Blue Bar: Total Response Time | 🔴 Red Line: Time spent querying the Database)*
+
+          ```mermaid
+          %%{init: { "theme": "default", "themeVariables": { "xyChart": { "plotColorPalette": "#10b981" } } } }%%
+          xychart-beta
+              title "Peak Memory Usage (MB)"
+              x-axis [$x]
+              y-axis "Memory (MB)" 0 --> $maxMem
+              bar [$yMem]
+          ```
+          MD;
+          
+          file_put_contents(getenv('GITHUB_STEP_SUMMARY'), $mermaid . "\n", FILE_APPEND);
+          EOF
+          
+          php generate.php >> $GITHUB_STEP_SUMMARY
+          
+      - name: Fetch Previous History
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: previous-gh-pages
+
+      - name: Generate Interactive HTML Dashboard
+        env:
+          CLEAR_HISTORY: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CLEAR_HISTORY == 'true') || (inputs.use-repo-vars != true && inputs.clear-history == true) }}
+        run: |
+          cat << 'EOF' > generate-html.php
+          <?php
+          $files = glob("results/*.json");
+          $allData = [];
+          foreach ($files as $file) {
+              $name = str_replace(['results/benchmark-result-', '.json'], '', $file);
+              
+              $parts = explode('_', $name);
+              $debugState = str_replace('debug-', '', $parts[2] ?? 'false');
+              $coreState = str_replace('core-', '', $parts[3] ?? 'true');
+              $testExtState = str_replace('testexts-', '', $parts[4] ?? '');
+              $opcacheState = str_replace('opcache-', '', $parts[5] ?? 'false');
+              $targetState = str_replace(['target-', '.json'], '', $parts[6] ?? 'Unknown');
+              
+              $debugLabel = $debugState === 'true' ? ' (Debug)' : '';
+              $coreLabel = $coreState === 'false' ? ' (Naked)' : '';
+              $opcacheLabel = $opcacheState === 'true' ? ' (OPcache)' : '';
+              
+              $extString = str_replace('_', ', ', $testExtState);
+              $testExtLabel = $testExtState !== '' ? " (+{$extString})" : '';
+              
+              $formattedName = $parts[0] . '_' . $parts[1] . $debugLabel . $coreLabel . $testExtLabel . $opcacheLabel . '_' . $targetState;
+              
+              $allData[$formattedName] = json_decode(file_get_contents($file), true);
+          }
+          
+          $currentRun = [
+              'id' => getenv('GITHUB_RUN_ID'),
+              'commit' => getenv('GITHUB_SHA'),
+              'ref' => getenv('GITHUB_REF_NAME'),
+              'timestamp' => time(),
+              'data' => $allData
+          ];
+          
+          $history = [];
+          $clearHistory = getenv('CLEAR_HISTORY') === 'true';
+          if (!$clearHistory && file_exists('previous-gh-pages/history.json')) {
+              $history = json_decode(file_get_contents('previous-gh-pages/history.json'), true) ?: [];
+          }
+          
+          // Prevent duplicate runs from being appended if re-run
+          $history = array_filter($history, function($run) use ($currentRun) {
+              return $run['id'] !== $currentRun['id'];
+          });
+          
+          $history[] = $currentRun;
+          
+          // Cap to last 50 runs to prevent massive file bloat
+          if (count($history) > 50) {
+              $history = array_values(array_slice($history, -50));
+          }
+          
+          file_put_contents('dashboard/history.json', json_encode($history));
+          
+          $jsonDump = json_encode($allData);
+          file_put_contents('dashboard/data.json', $jsonDump);
+          EOF
+          php generate-html.php
+          echo -e "\n\n---\n\n### 🌍 [View Live Interactive Dashboard](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Deploy Dashboard to GitHub Pages
+        if: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_DEPLOY_DASHBOARD != 'false') || (inputs.use-repo-vars != true && inputs.deploy-dashboard != false) }}
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dashboard
+          publish_branch: gh-pages
+          force_orphan: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'Deploy Benchmark Dashboard [skip ci]'
