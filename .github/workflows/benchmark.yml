@@ -709,7 +709,7 @@ jobs:
 
       - name: Generate Interactive HTML Dashboard
         env:
-          CLEAR_HISTORY: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CLEAR_HISTORY == 'true') || (inputs.use-repo-vars != true && inputs.clear-history == true) }}
+          CLEAR_HISTORY: ${{ vars.BENCHMARK_CLEAR_HISTORY == 'true' || inputs.clear-history == true }}
         run: |
           cat << 'EOF' > generate-html.php
           <?php
