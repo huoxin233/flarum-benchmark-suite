@@ -54,6 +54,11 @@ on:
         required: true
         default: '5'
         type: string
+      vm-iterations:
+        description: 'Parallel VMs to spawn (Averages result)'
+        required: false
+        default: '1'
+        type: string
       show-response:
         description: 'Print JSON Response'
         required: false
@@ -158,6 +163,11 @@ on:
         required: false
         default: '5'
         type: string
+      vm-iterations:
+        description: 'Parallel VMs to spawn (Averages result)'
+        required: false
+        default: '1'
+        type: string
       show-response:
         description: 'Print JSON Response'
         required: false
@@ -234,6 +244,7 @@ jobs:
           CORE_EXT: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CORE_EXTENSIONS) || inputs.core-extensions || '["true"]' }}
           TEST_EXT: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_TEST_EXTENSIONS) || inputs.test-extensions || '[""]' }}
           ENDPOINT: ${{ (inputs.use-repo-vars == true && (vars.BENCHMARK_TARGETS || vars.BENCHMARK_ENDPOINT)) || inputs.targets || inputs.endpoint || '["/api/discussions"]' }}
+          VM_ITERS: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_VM_ITERATIONS) || inputs.vm-iterations || '1' }}
         run: |
           EOF_DELIM=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           
@@ -270,6 +281,13 @@ jobs:
                 ]
               }')
           fi
+          
+          # Distribute matrix across multiple VM iterations if requested (1 by default)
+          MATRIX_JSON=$(echo "$MATRIX_JSON" | jq -c --arg vm "$VM_ITERS" '
+            .include |= [
+              .[] as $item | range(1, ($vm | tonumber) + 1) | $item + { "vm_iteration": . }
+            ]
+          ')
           
           echo "### 🧮 Executing Benchmark Matrix" >> $GITHUB_STEP_SUMMARY
           echo '```json' >> $GITHUB_STEP_SUMMARY
@@ -465,7 +483,7 @@ jobs:
           SAFE_DB=$(echo "${{ matrix.database }}" | tr ':' '-')
           SAFE_TEST_EXT=$(echo "${{ matrix.test-exts }}" | tr '/:' '-' | tr ',' '_')
           SAFE_TARGET=$(echo "$TARGET_NAME" | tr '/:?&=' '-')
-          RESULT_FILE="benchmark-result-${{ matrix.flarum-version }}_${SAFE_DB}_debug-${{ matrix.debug }}_core-${{ matrix.core-extensions }}_testexts-${SAFE_TEST_EXT}_opcache-${{ matrix.opcache }}_target-${SAFE_TARGET}.json"
+          RESULT_FILE="benchmark-result-${{ matrix.flarum-version }}_${SAFE_DB}_debug-${{ matrix.debug }}_core-${{ matrix.core-extensions }}_testexts-${SAFE_TEST_EXT}_opcache-${{ matrix.opcache }}_target-${SAFE_TARGET}_vm-${{ matrix.vm_iteration }}.json"
           
           # 1. Run Benchmark ONCE (Outputs Terminal Table to console + saves raw JSON to file)
           php flarum benchmark:run \
@@ -622,20 +640,46 @@ jobs:
               exit(0);
           }
           
+          $groupedData = [];
+          
+          foreach ($files as $file) {
+              $data = json_decode(file_get_contents($file), true);
+              $name = str_replace(['results/benchmark-result-', '.json'], '', $file);
+              $baseName = preg_replace('/_vm-\d+$/', '', $name);
+              
+              if (!isset($groupedData[$baseName])) {
+                  $groupedData[$baseName] = [
+                      'sum_time' => 0,
+                      'sum_query_time' => 0,
+                      'sum_memory' => 0,
+                      'sum_queries' => 0,
+                      'count' => 0
+                  ];
+              }
+              $groupedData[$baseName]['sum_time'] += $data['avg_time_ms'];
+              $groupedData[$baseName]['sum_query_time'] += $data['avg_query_time_ms'];
+              $groupedData[$baseName]['sum_memory'] += $data['avg_memory_mb'];
+              $groupedData[$baseName]['sum_queries'] += $data['avg_queries'];
+              $groupedData[$baseName]['count']++;
+          }
+          
           $labels = [];
           $times = [];
           $queryTimes = [];
           $memories = [];
           
-          echo "| ID | Flarum | DB Engine | Target | Avg Time | Avg DB Queries | Peak Memory |\n";
-          echo "|----|--------|-----------|--------|----------|----------------|-------------|\n";
+          echo "| ID | VMs | Flarum | DB Engine | Target | Avg Time | Avg DB Queries | Peak Memory |\n";
+          echo "|----|-----|--------|-----------|--------|----------|----------------|-------------|\n";
           
           $id = 1;
-          foreach ($files as $file) {
-              $data = json_decode(file_get_contents($file), true);
-              $name = str_replace(['results/benchmark-result-', '.json'], '', $file);
+          foreach ($groupedData as $baseName => $group) {
+              $count = $group['count'];
+              $avgTime = round($group['sum_time'] / $count, 2);
+              $avgQueryTime = round($group['sum_query_time'] / $count, 2);
+              $avgMemory = round($group['sum_memory'] / $count, 2);
+              $avgQueries = round($group['sum_queries'] / $count, 1);
               
-              $parts = explode('_', $name);
+              $parts = explode('_', $baseName);
               $flarum = $parts[0] ?? 'Unknown';
               $db = $parts[1] ?? 'Unknown';
               $debugState = str_replace('debug-', '', $parts[2] ?? 'false');
@@ -651,15 +695,14 @@ jobs:
               $extString = str_replace('_', ', ', $testExtState);
               $testExtLabel = $testExtState !== '' ? " (+{$extString})" : '';
               
-              // Use a short ID (R1, R2...) for Mermaid to prevent X-axis overlapping
               $shortLabel = "R" . $id;
               
               $labels[] = '"' . $shortLabel . '"';
-              $times[] = $data['avg_time_ms'];
-              $queryTimes[] = $data['avg_query_time_ms'];
-              $memories[] = $data['avg_memory_mb'];
+              $times[] = $avgTime;
+              $queryTimes[] = $avgQueryTime;
+              $memories[] = $avgMemory;
               
-              echo "| **{$shortLabel}** | `{$flarum}{$debugLabel}{$coreLabel}{$testExtLabel}{$opcacheLabel}` | `{$db}` | `{$targetState}` | **{$data['avg_time_ms']} ms** | {$data['avg_queries']} | {$data['avg_memory_mb']} MB |\n";
+              echo "| **{$shortLabel}** | {$count} | `{$flarum}{$debugLabel}{$coreLabel}{$testExtLabel}{$opcacheLabel}` | `{$db}` | `{$targetState}` | **{$avgTime} ms** | {$avgQueries} | {$avgMemory} MB |\n";
               
               $id++;
           }
@@ -714,11 +757,71 @@ jobs:
           cat << 'EOF' > generate-html.php
           <?php
           $files = glob("results/*.json");
-          $allData = [];
+          $groupedData = [];
+          
           foreach ($files as $file) {
+              $data = json_decode(file_get_contents($file), true);
               $name = str_replace(['results/benchmark-result-', '.json'], '', $file);
+              $baseName = preg_replace('/_vm-\d+$/', '', $name);
               
-              $parts = explode('_', $name);
+              if (!isset($groupedData[$baseName])) {
+                  $groupedData[$baseName] = [
+                      'sum_time' => 0,
+                      'sum_query_time' => 0,
+                      'sum_memory' => 0,
+                      'sum_queries' => 0,
+                      'count' => 0,
+                      'queries' => []
+                  ];
+              }
+              
+              $groupedData[$baseName]['sum_time'] += $data['avg_time_ms'];
+              $groupedData[$baseName]['sum_query_time'] += $data['avg_query_time_ms'];
+              $groupedData[$baseName]['sum_memory'] += $data['avg_memory_mb'];
+              $groupedData[$baseName]['sum_queries'] += $data['avg_queries'];
+              $groupedData[$baseName]['count']++;
+              
+              $iterations = $data['iterations'] ?? [];
+              $lastIteration = end($iterations);
+              if ($lastIteration && isset($lastIteration['queries'])) {
+                  foreach ($lastIteration['queries'] as $q) {
+                      $sql = $q['sql'];
+                      $sql = preg_replace('/\bIN\s*\([0-9\s,]+\)/i', 'in (...)', $sql);
+                      if (!isset($groupedData[$baseName]['queries'][$sql])) {
+                          $groupedData[$baseName]['queries'][$sql] = [
+                              'sum_count' => 0,
+                              'sum_time_ms' => 0
+                          ];
+                      }
+                      $groupedData[$baseName]['queries'][$sql]['sum_count']++;
+                      $groupedData[$baseName]['queries'][$sql]['sum_time_ms'] += $q['time'];
+                  }
+              }
+          }
+          
+          $allData = [];
+          
+          foreach ($groupedData as $baseName => $group) {
+              $vmCount = $group['count'];
+              
+              $avgTime = round($group['sum_time'] / $vmCount, 2);
+              $avgQueryTime = round($group['sum_query_time'] / $vmCount, 2);
+              $avgMemory = round($group['sum_memory'] / $vmCount, 2);
+              $avgQueries = round($group['sum_queries'] / $vmCount, 1);
+              
+              $avgQueriesBreakdown = [];
+              foreach ($group['queries'] as $sql => $qData) {
+                  $avgQueriesBreakdown[$sql] = [
+                      'count' => round($qData['sum_count'] / $vmCount, 1),
+                      'time_ms' => round($qData['sum_time_ms'] / $vmCount, 2)
+                  ];
+              }
+              
+              uasort($avgQueriesBreakdown, function($a, $b) {
+                  return $b['time_ms'] <=> $a['time_ms'];
+              });
+              
+              $parts = explode('_', $baseName);
               $debugState = str_replace('debug-', '', $parts[2] ?? 'false');
               $coreState = str_replace('core-', '', $parts[3] ?? 'true');
               $testExtState = str_replace('testexts-', '', $parts[4] ?? '');
@@ -734,33 +837,13 @@ jobs:
               
               $formattedName = $parts[0] . '_' . $parts[1] . $debugLabel . $coreLabel . $testExtLabel . $opcacheLabel . '_' . $targetState;
               
-              $fileData = json_decode(file_get_contents($file), true);
-              
-              $aggregatedQueries = [];
-              $iterations = $fileData['iterations'] ?? [];
-              $lastIteration = end($iterations);
-              
-              if ($lastIteration && isset($lastIteration['queries'])) {
-                  foreach ($lastIteration['queries'] as $q) {
-                      $sql = $q['sql'];
-                      // Normalize Eloquent's raw integer arrays so queries match across versions
-                      $sql = preg_replace('/\bIN\s*\([0-9\s,]+\)/i', 'in (...)', $sql);
-                      if (!isset($aggregatedQueries[$sql])) {
-                          $aggregatedQueries[$sql] = ['count' => 0, 'time_ms' => 0];
-                      }
-                      $aggregatedQueries[$sql]['count']++;
-                      $aggregatedQueries[$sql]['time_ms'] += $q['time'];
-                  }
-              }
-              
-              uasort($aggregatedQueries, function($a, $b) {
-                  return $b['time_ms'] <=> $a['time_ms'];
-              });
-              
-              $fileData['queries'] = $aggregatedQueries;
-              unset($fileData['iterations']);
-              
-              $allData[$formattedName] = $fileData;
+              $allData[$formattedName] = [
+                  'avg_time_ms' => $avgTime,
+                  'avg_query_time_ms' => $avgQueryTime,
+                  'avg_memory_mb' => $avgMemory,
+                  'avg_queries' => $avgQueries,
+                  'queries' => $avgQueriesBreakdown
+              ];
           }
           
           $currentRun = [

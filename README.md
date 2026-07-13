@@ -21,7 +21,7 @@ The suite measures:
 ---
 
 > [!WARNING]
-> **Environment Variance**: GitHub Actions utilizes shared public virtual machines. CPU and RAM allocation can fluctuate slightly depending on GitHub's current server load. While this suite is excellent for catching massive bottlenecks (e.g., N+1 query bugs or slow SQL queries), if you require absolute millisecond precision for comparative execution time baselines, it is highly recommended to configure the workflow to run on a **dedicated self-hosted runner**.
+> **Environment Variance**: GitHub Actions utilizes shared public virtual machines. CPU and RAM allocation can fluctuate slightly depending on GitHub's current server load. While this suite is excellent for catching massive bottlenecks, if you require absolute millisecond precision for comparative execution time baselines, you can utilize the **Multi-VM Averaging (`vm-iterations`)** feature to distribute tests across multiple VMs and average the noise, but it is still recommended to configure the workflow to run on a **dedicated self-hosted runner**.
 
 ---
 
@@ -78,6 +78,7 @@ If the `Override inputs with Repository Variables` toggle is checked (which is t
 - `BENCHMARK_TARGETS` (e.g. `["/api/discussions"]`)
 - `BENCHMARK_BODY` (e.g. `""`)
 - `BENCHMARK_ITERATIONS` (e.g. `"5"`)
+- `BENCHMARK_VM_ITERATIONS` (e.g. `"3"`)
 - `BENCHMARK_SHOW_RESPONSE` (e.g. `"false"`)
 - `BENCHMARK_CLEAR_CACHE` (e.g. `"true"`)
 - `BENCHMARK_WARMUP` (e.g. `"true"`)
@@ -122,6 +123,16 @@ However, you can inject **JSON Objects** to run advanced setup scripts, or bypas
 ]
 ```
 *(Note: If the `name` property is omitted, the dashboard chart will safely default to identifying the test as `sql-query` or `php-code`)*
+
+### 🚀 Advanced: Multi-VM Averaging (Hardware Variance Smoothing)
+If you want to combat GitHub Action's "noisy neighbor" without setting up self-hosted runners, you can use the `vm-iterations` input (or `BENCHMARK_VM_ITERATIONS` variable).
+
+If you set `vm-iterations` to `3`, the suite will spawn **3 identical, parallel GitHub Action virtual machines** for every configuration in your matrix. Each VM will run the full test suite independently. 
+
+Once all VMs finish, the aggregator engine will group them, average their execution times, average their memory peaks, and automatically merge their SQL query breakdowns to give you a statistically sound, highly accurate result!
+
+> [!WARNING]
+> Setting `vm-iterations` to 5 on a massive cross-version matrix will spawn dozens of parallel VMs and rapidly consume your GitHub Action minutes. Use this feature thoughtfully!
 
 ### 🎛️ Advanced: Custom Matrix / BENCHMARK_CUSTOM_MATRIX
 
