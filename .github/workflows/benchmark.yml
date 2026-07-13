@@ -734,7 +734,33 @@ jobs:
               
               $formattedName = $parts[0] . '_' . $parts[1] . $debugLabel . $coreLabel . $testExtLabel . $opcacheLabel . '_' . $targetState;
               
-              $allData[$formattedName] = json_decode(file_get_contents($file), true);
+              $fileData = json_decode(file_get_contents($file), true);
+              
+              $aggregatedQueries = [];
+              $iterations = $fileData['iterations'] ?? [];
+              $lastIteration = end($iterations);
+              
+              if ($lastIteration && isset($lastIteration['queries'])) {
+                  foreach ($lastIteration['queries'] as $q) {
+                      $sql = $q['sql'];
+                      // Normalize Eloquent's raw integer arrays so queries match across versions
+                      $sql = preg_replace('/\bIN\s*\([0-9\s,]+\)/i', 'in (...)', $sql);
+                      if (!isset($aggregatedQueries[$sql])) {
+                          $aggregatedQueries[$sql] = ['count' => 0, 'time_ms' => 0];
+                      }
+                      $aggregatedQueries[$sql]['count']++;
+                      $aggregatedQueries[$sql]['time_ms'] += $q['time'];
+                  }
+              }
+              
+              uasort($aggregatedQueries, function($a, $b) {
+                  return $b['time_ms'] <=> $a['time_ms'];
+              });
+              
+              $fileData['queries'] = $aggregatedQueries;
+              unset($fileData['iterations']);
+              
+              $allData[$formattedName] = $fileData;
           }
           
           $currentRun = [

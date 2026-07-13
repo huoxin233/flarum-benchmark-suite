@@ -545,6 +545,48 @@
                 } else {
                     diffHtml = `<div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 0.9rem; text-align: center;">No matching configuration in Run A to compare against.</div>`;
                 }
+                
+                let queryRowsHtml = '';
+                const queriesA = a ? (a.queries || {}) : {};
+                const queriesB = b ? (b.queries || {}) : {};
+                const allSql = new Set([...Object.keys(queriesA), ...Object.keys(queriesB)]);
+                
+                if (allSql.size > 0) {
+                    const sqlArray = Array.from(allSql).map(sql => {
+                        const qA = queriesA[sql] || { count: 0, time_ms: 0 };
+                        const qB = queriesB[sql] || { count: 0, time_ms: 0 };
+                        return { sql, qA, qB, diffCount: qB.count - qA.count, diffTime: qB.time_ms - qA.time_ms };
+                    });
+                    
+                    // Sort by highest time in B, then A
+                    sqlArray.sort((x, y) => Math.max(y.qB.time_ms, y.qA.time_ms) - Math.max(x.qB.time_ms, x.qA.time_ms));
+                    
+                    queryRowsHtml = sqlArray.map(item => {
+                        const countStr = a 
+                            ? `${item.qA.count} &rarr; ${item.qB.count}`
+                            : `${item.qB.count}`;
+                            
+                        const timeStr = a
+                            ? `${item.qA.time_ms.toFixed(2)}ms &rarr; ${item.qB.time_ms.toFixed(2)}ms`
+                            : `${item.qB.time_ms.toFixed(2)}ms`;
+                            
+                        let colorStyle = "";
+                        if (a) {
+                            if (item.diffCount > 0) colorStyle = "color: var(--flarum-orange);";
+                            else if (item.diffCount < 0) colorStyle = "color: #10b981;"; // Green
+                        }
+                        
+                        return `
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <td style="padding: 8px 4px; max-width: 300px;">
+                                <div style="max-height: 80px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; font-family: monospace; font-size: 0.75rem; color: #a1a1aa; padding-right: 4px;">${item.sql}</div>
+                            </td>
+                            <td style="padding: 8px 4px; text-align: right; font-weight: 700; vertical-align: top; ${colorStyle}">${countStr}</td>
+                            <td style="padding: 8px 4px; text-align: right; vertical-align: top;">${timeStr}</td>
+                        </tr>
+                        `;
+                    }).join('');
+                }
 
                 grid.innerHTML += `
                     <div class="card">
@@ -579,6 +621,24 @@
                             </div>
                         </div>
                         ${diffHtml}
+                        
+                        ${queryRowsHtml ? `
+                            <h4 style="margin-top: 25px; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">Query Inspector</h4>
+                            <div style="overflow-x: auto; max-height: 250px; overflow-y: auto; margin-top: 10px; border-radius: 4px; background: rgba(0,0,0,0.2);">
+                                <table style="width: 100%; text-align: left; font-size: 0.8rem; color: var(--text-muted); border-collapse: collapse;">
+                                    <thead style="position: sticky; top: 0; background: #1e1e24; z-index: 1; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                                        <tr>
+                                            <th style="padding: 8px 4px; font-weight: 600;">Target SQL</th>
+                                            <th style="padding: 8px 4px; text-align: right; font-weight: 600;">Count</th>
+                                            <th style="padding: 8px 4px; text-align: right; font-weight: 600;">Time</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${queryRowsHtml}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ` : ''}
                     </div>
                 `;
             });
