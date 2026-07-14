@@ -395,10 +395,15 @@ jobs:
             ENABLED_EXTENSIONS="huoxin-benchmark-tool"
           fi
           
+          TEST_EXT_IDS=""
           if [ "${{ matrix.test-exts }}" != "" ] && [ "${{ matrix.test-exts }}" != "none" ]; then
             for ext in $(echo "${{ matrix.test-exts }}" | tr ',' ' '); do
               TEST_EXT_ID=$(echo "$ext" | cut -d':' -f1 | sed 's/\//-/' | sed 's/^flarum-ext-/flarum-/')
-              ENABLED_EXTENSIONS="$ENABLED_EXTENSIONS,$TEST_EXT_ID"
+              if [ "$TEST_EXT_IDS" == "" ]; then
+                TEST_EXT_IDS="$TEST_EXT_ID"
+              else
+                TEST_EXT_IDS="$TEST_EXT_IDS,$TEST_EXT_ID"
+              fi
             done
           fi
           
@@ -434,6 +439,33 @@ jobs:
           
           # Run the Flarum installer
           php flarum install --file=install.yml
+          
+          # Enable Test Extensions AFTER install to prevent Eloquent Model crashes
+          if [ "$TEST_EXT_IDS" != "" ]; then
+            echo "Enabling Test Extensions safely..."
+            cat <<EOF > enable-exts.php
+          <?php
+          require 'vendor/autoload.php';
+          \$app = require 'site.php';
+          if (!\$app instanceof \Flarum\Foundation\InstalledSite) {
+            \$app = require 'bootstrap.php';
+          }
+          \$server = \$app->bootApp();
+          \$manager = \$server->getContainer()->make(\Flarum\Extension\ExtensionManager::class);
+          
+          \$exts = explode(',', '$TEST_EXT_IDS');
+          foreach (\$exts as \$id) {
+              if (empty(\$id)) continue;
+              echo "Enabling \$id...\n";
+              try {
+                  \$manager->enable(\$id);
+              } catch (\Throwable \$e) {
+                  echo "Warning: Failed to enable \$id: " . \$e->getMessage() . "\n";
+              }
+          }
+          EOF
+            php enable-exts.php
+          fi
 
       - name: Show Flarum Info
         working-directory: ./flarum-app
