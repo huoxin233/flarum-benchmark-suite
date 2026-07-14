@@ -297,7 +297,7 @@ jobs:
           # Distribute matrix across multiple VM iterations if requested (1 by default)
           MATRIX_JSON=$(echo "$MATRIX_JSON" | jq -c --arg vm "$VM_ITERS" '
             .include |= [
-              .[] as $item | range(1, ($vm | tonumber) + 1) | $item + { "vm_iteration": . }
+              .[] as $item | range(1; ($vm | tonumber) + 1) | $item + { "vm_iteration": . }
             ]
           ')
           
