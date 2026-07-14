@@ -528,7 +528,20 @@ jobs:
           fi
           
           SAFE_DB=$(echo "${{ matrix.database }}" | tr ':' '-')
-          SAFE_TEST_EXT=$(echo "${{ matrix.test-exts }}" | tr '/:' '-' | tr ',' '_')
+          
+          EXT_COUNT=$(echo "${{ matrix.test-exts }}" | awk -F, '{print NF}')
+          if [ -z "${{ matrix.test-exts }}" ] || [ "${{ matrix.test-exts }}" == "none" ]; then
+            EXT_COUNT=0
+          fi
+          
+          if [ "$EXT_COUNT" -gt 3 ]; then
+            FIRST_THREE=$(echo "${{ matrix.test-exts }}" | cut -d',' -f1-3 | tr '/:' '-' | tr ',' '+')
+            REMAINING=$((EXT_COUNT - 3))
+            SAFE_TEST_EXT="${FIRST_THREE}+${REMAINING}more"
+          else
+            SAFE_TEST_EXT=$(echo "${{ matrix.test-exts }}" | tr '/:' '-' | tr ',' '+')
+          fi
+          
           SAFE_TARGET=$(echo "$TARGET_NAME" | tr '/:?&=' '-')
           RESULT_FILE="benchmark-result-${{ matrix.flarum-version }}_${SAFE_DB}_debug-${{ matrix.debug }}_core-${{ matrix.core-extensions }}_testexts-${SAFE_TEST_EXT}_opcache-${{ matrix.opcache }}_target-${SAFE_TARGET}_U${USERS}D${DISCUSSIONS}P${POSTS}_vm-${{ matrix.vm_iteration }}.json"
           
@@ -740,7 +753,7 @@ jobs:
               $coreLabel = $coreState === 'false' ? ' (Naked)' : '';
               $opcacheLabel = $opcacheState === 'true' ? ' (OPcache)' : '';
               
-              $extString = str_replace('_', ', ', $testExtState);
+              $extString = str_replace('+', ', ', $testExtState);
               $testExtLabel = $testExtState !== '' ? " (+{$extString})" : '';
               
               $shortLabel = "R" . $id;
