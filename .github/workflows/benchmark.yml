@@ -746,7 +746,7 @@ jobs:
               $coreState = str_replace('core-', '', $parts[3] ?? 'true');
               $testExtState = str_replace('testexts-', '', $parts[4] ?? '');
               $opcacheState = str_replace('opcache-', '', $parts[5] ?? 'false');
-              $targetState = str_replace(['target-', '.json'], '', $parts[6] ?? 'Unknown');
+              $targetState = ltrim(str_replace(['target-', '.json'], '', $parts[6] ?? 'Unknown'), '-');
               $seedState = str_replace('.json', '', $parts[7] ?? '');
               
               $debugLabel = $debugState === 'true' ? ' (Debug)' : '';
@@ -765,7 +765,7 @@ jobs:
               
               $displayTarget = $targetState;
               if ($seedState) {
-                  $displayTarget .= "<br><sub>*(Size: {$seedState})*</sub>";
+                  $displayTarget .= " (Size: {$seedState})";
               }
               
               echo "| **{$shortLabel}** | {$count} | `{$flarum}{$debugLabel}{$coreLabel}{$testExtLabel}{$opcacheLabel}` | `{$db}` | `{$displayTarget}` | **{$avgTime} ms** | {$avgQueries} | {$avgMemory} MB |\n";
