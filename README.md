@@ -82,9 +82,9 @@ If the `Override inputs with Repository Variables` toggle is checked (which is t
 - `BENCHMARK_SHOW_RESPONSE` (e.g. `"false"`)
 - `BENCHMARK_CLEAR_CACHE` (e.g. `"true"`)
 - `BENCHMARK_WARMUP` (e.g. `"true"`)
-- `BENCHMARK_USERS` (e.g. `"50"`)
-- `BENCHMARK_DISCUSSIONS` (e.g. `"50"`)
-- `BENCHMARK_POSTS` (e.g. `"1000"`)
+- `BENCHMARK_USERS` (e.g. `'["50", "1000"]'`)
+- `BENCHMARK_DISCUSSIONS` (e.g. `'["50", "1000"]'`)
+- `BENCHMARK_POSTS` (e.g. `'["1000", "50000"]'`)
 - `BENCHMARK_DEPLOY_DASHBOARD` (e.g. `"true"`)
 - `BENCHMARK_CLEAR_HISTORY` (e.g. `"false"`)
 
@@ -206,6 +206,87 @@ For example, Flarum 1.x does not support PostgreSQL. If you want to test **Flaru
 ```
 
 By providing this JSON payload, the action will skip the automated cross-multiplication and strictly spawn those two specific benchmarking jobs!
+
+### 📈 Advanced: Data Size Scaling
+
+Because the benchmark suite dynamically injects the `users`, `discussions`, and `posts` variables into the matrix, you can easily use a Custom Matrix to test how Flarum 1.x and Flarum 2.x performance degrades as the database gets larger!
+
+The following Custom Matrix tests both Flarum versions against a "Small Forum" (1,000 posts) and a "Large Forum" (50,000 posts) side-by-side:
+
+```json
+{
+  "include": [
+    {
+      "flarum-version": "v1.8.0",
+      "database": "mysql:8.4",
+      "php-version": "8.3",
+      "debug": "false",
+      "core-extensions": "true",
+      "test-exts": "",
+      "opcache": "false",
+      "target_type": "api",
+      "target_value": "/api/discussions",
+      "target_name": "Discussions (Small Forum)",
+      "setup_sql": "",
+      "setup_php": "",
+      "users": "50",
+      "discussions": "50",
+      "posts": "1000"
+    },
+    {
+      "flarum-version": "v2.x-dev",
+      "database": "mysql:8.4",
+      "php-version": "8.3",
+      "debug": "false",
+      "core-extensions": "true",
+      "test-exts": "",
+      "opcache": "false",
+      "target_type": "api",
+      "target_value": "/api/discussions",
+      "target_name": "Discussions (Small Forum)",
+      "setup_sql": "",
+      "setup_php": "",
+      "users": "50",
+      "discussions": "50",
+      "posts": "1000"
+    },
+    {
+      "flarum-version": "v1.8.0",
+      "database": "mysql:8.4",
+      "php-version": "8.3",
+      "debug": "false",
+      "core-extensions": "true",
+      "test-exts": "",
+      "opcache": "false",
+      "target_type": "api",
+      "target_value": "/api/discussions",
+      "target_name": "Discussions (Large Forum)",
+      "setup_sql": "",
+      "setup_php": "",
+      "users": "1000",
+      "discussions": "1000",
+      "posts": "50000"
+    },
+    {
+      "flarum-version": "v2.x-dev",
+      "database": "mysql:8.4",
+      "php-version": "8.3",
+      "debug": "false",
+      "core-extensions": "true",
+      "test-exts": "",
+      "opcache": "false",
+      "target_type": "api",
+      "target_value": "/api/discussions",
+      "target_name": "Discussions (Large Forum)",
+      "setup_sql": "",
+      "setup_php": "",
+      "users": "1000",
+      "discussions": "1000",
+      "posts": "50000"
+    }
+  ]
+}
+```
 
 ---
 
