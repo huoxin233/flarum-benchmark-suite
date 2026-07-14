@@ -175,7 +175,8 @@
         </div>
 
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('latest')">Latest Run Configurations</button>
+            <button class="tab-btn active" onclick="switchTab('latest')">Backend API Configurations</button>
+            <button class="tab-btn" onclick="switchTab('frontend')">Frontend Browser Metrics</button>
             <button class="tab-btn" onclick="switchTab('history')">Historical Trends</button>
         </div>
         
@@ -212,6 +213,39 @@
             </div>
         </div>
 
+        <!-- FRONTEND SECTION -->
+        <div id="tab-frontend" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h2>First Contentful Paint (FCP)</h2>
+                    <div class="chart-container">
+                        <canvas id="fcpChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>DOM Ready Time</h2>
+                    <div class="chart-container">
+                        <canvas id="domChart"></canvas>
+                    </div>
+                </div>
+    
+                <div class="card">
+                    <h2>Total Load Time</h2>
+                    <div class="chart-container">
+                        <canvas id="loadChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>JS Heap Size (MB)</h2>
+                    <div class="chart-container">
+                        <canvas id="jsChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- HISTORY SECTION -->
         <div id="tab-history" class="tab-content">
             <div class="card full-width" style="margin-bottom: 40px;">
@@ -222,6 +256,12 @@
                         <option value="avg_queries">Database Queries Executed</option>
                         <option value="avg_memory_mb">Peak Memory Usage (MB)</option>
                         <option value="avg_php_cpu_time_ms">PHP Execution Time (ms)</option>
+                        <optgroup label="Frontend (Playwright)">
+                            <option value="frontend.avg_fcp_ms">First Contentful Paint (ms)</option>
+                            <option value="frontend.avg_dom_ready_ms">DOM Ready Time (ms)</option>
+                            <option value="frontend.avg_load_time_ms">Total Load Time (ms)</option>
+                            <option value="frontend.avg_js_heap_mb">JS Heap Size (MB)</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div class="chart-container" style="height: 400px;">
@@ -369,6 +409,87 @@
                 },
                 options: { responsive: true, maintainAspectRatio: false }
             });
+
+            // Frontend Metrics
+            const hasFrontend = rawLabels.some(l => latestRun[l].frontend);
+            
+            if (hasFrontend) {
+                const avgFcp = rawLabels.map(l => latestRun[l].frontend ? latestRun[l].frontend.avg_fcp_ms : 0);
+                const avgDom = rawLabels.map(l => latestRun[l].frontend ? latestRun[l].frontend.avg_dom_ready_ms : 0);
+                const avgLoad = rawLabels.map(l => latestRun[l].frontend ? latestRun[l].frontend.avg_load_time_ms : 0);
+                const avgJs = rawLabels.map(l => latestRun[l].frontend ? latestRun[l].frontend.avg_js_heap_mb : 0);
+
+                new Chart(document.getElementById('fcpChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: prettyLabels,
+                        datasets: [{
+                            label: 'First Contentful Paint (ms)',
+                            data: avgFcp,
+                            backgroundColor: 'rgba(234, 179, 8, 0.8)',
+                            borderColor: '#eab308',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                new Chart(document.getElementById('domChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: prettyLabels,
+                        datasets: [{
+                            label: 'DOM Ready Time (ms)',
+                            data: avgDom,
+                            backgroundColor: 'rgba(249, 115, 22, 0.8)',
+                            borderColor: '#f97316',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                new Chart(document.getElementById('loadChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: prettyLabels,
+                        datasets: [{
+                            label: 'Total Load Time (ms)',
+                            data: avgLoad,
+                            backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                            borderColor: '#ef4444',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                new Chart(document.getElementById('jsChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: prettyLabels,
+                        datasets: [{
+                            label: 'JS Heap Size (MB)',
+                            data: avgJs,
+                            backgroundColor: 'rgba(6, 182, 212, 0.8)',
+                            borderColor: '#06b6d4',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+            } else {
+                document.getElementById('tab-frontend').innerHTML = `
+                    <div style="text-align:center; padding: 40px; background: rgba(255, 255, 255, 0.05); border-radius: 12px; margin-top: 20px;">
+                        <h3 style="color: var(--text-muted);">No Frontend Data Available</h3>
+                        <p style="color: var(--text-muted); font-size: 0.9rem;">Run the benchmark with <code>benchmark-type: frontend</code> or <code>both</code> to generate Playwright metrics.</p>
+                    </div>
+                `;
+            }
         }
 
         function initHistoryChart() {
@@ -392,7 +513,15 @@
                 const color = `hsl(${(i * 137) % 360}, 70%, 50%)`;
                 return {
                     label: formatLabel(key),
-                    data: historyData.map(run => run.data[key] ? run.data[key][metricKey] : null),
+                    data: historyData.map(run => {
+                        const runData = run.data[key];
+                        if (!runData) return null;
+                        if (metricKey.startsWith('frontend.')) {
+                            const fKey = metricKey.split('.')[1];
+                            return runData.frontend ? runData.frontend[fKey] : null;
+                        }
+                        return runData[metricKey] !== undefined ? runData[metricKey] : null;
+                    }),
                     borderColor: color,
                     backgroundColor: color,
                     tension: 0.3,
@@ -505,12 +634,12 @@
                 
                 let diffHtml = '';
                 if (a) {
-                    const diffTime = (b.avg_time_ms - a.avg_time_ms).toFixed(2);
-                    const diffQueries = (b.avg_queries - a.avg_queries);
-                    const diffMemory = (b.avg_memory_mb - a.avg_memory_mb).toFixed(1);
-                    const diffCpu = (b.avg_php_cpu_time_ms - a.avg_php_cpu_time_ms).toFixed(2);
+                    const diffTime = a.avg_time_ms !== undefined ? (b.avg_time_ms - a.avg_time_ms).toFixed(2) : null;
+                    const diffQueries = a.avg_queries !== undefined ? (b.avg_queries - a.avg_queries) : null;
+                    const diffMemory = a.avg_memory_mb !== undefined ? (b.avg_memory_mb - a.avg_memory_mb).toFixed(1) : null;
                     
                     const formatDiff = (val, suffix) => {
+                        if (val === null) return `<span style="color:var(--text-muted)">N/A</span>`;
                         const num = parseFloat(val);
                         if (num === 0) return `<span style="color:var(--text-muted)">0 ${suffix}</span>`;
                         const sign = num > 0 ? '+' : '';
@@ -518,8 +647,10 @@
                         return `<span class="${colorClass}" style="font-weight: 800;">${sign}${val} ${suffix}</span>`;
                     };
                     
-                    diffHtml = `
-                        <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    diffHtml = `<div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">`;
+                    
+                    if (diffTime !== null) {
+                        diffHtml += `
                             <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
                                 <span>Response Time Delta:</span>
                                 <span style="font-size: 1.1rem;">${formatDiff(diffTime, 'ms')}</span>
@@ -532,16 +663,38 @@
                                 <span>Peak Memory Delta:</span>
                                 <span style="font-size: 1.1rem;">${formatDiff(diffMemory, 'MB')}</span>
                             </div>
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                                <span>PHP Execution CPU Delta:</span>
-                                <span style="font-size: 1.1rem;">${formatDiff(diffCpu, 'ms')}</span>
-                            </div>
                             <div style="display: flex; justify-content: space-between; font-size: 0.9rem; color: var(--text-muted); margin-top: 15px;">
                                 <span>Baseline ${explicitCrossCompare ? `(${formatLabel(targetKeyA)})` : `[${runInfoA}]`} Response Time:</span>
                                 <span>${a.avg_time_ms} ms</span>
                             </div>
-                        </div>
-                    `;
+                        `;
+                    }
+                    
+                    if (b.frontend && a.frontend) {
+                        const diffFcp = (b.frontend.avg_fcp_ms - a.frontend.avg_fcp_ms).toFixed(0);
+                        const diffDom = (b.frontend.avg_dom_ready_ms - a.frontend.avg_dom_ready_ms).toFixed(0);
+                        const diffLoad = (b.frontend.avg_load_time_ms - a.frontend.avg_load_time_ms).toFixed(0);
+                        
+                        diffHtml += `
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px; margin-top: 15px; color: var(--flarum-blue);">
+                                <strong>Frontend Playwright Delta</strong>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span>FCP Delta:</span>
+                                <span style="font-size: 1.1rem;">${formatDiff(diffFcp, 'ms')}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span>DOM Ready Delta:</span>
+                                <span style="font-size: 1.1rem;">${formatDiff(diffDom, 'ms')}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span>Full Load Delta:</span>
+                                <span style="font-size: 1.1rem;">${formatDiff(diffLoad, 'ms')}</span>
+                            </div>
+                        `;
+                    }
+                    
+                    diffHtml += `</div>`;
                 } else {
                     diffHtml = `<div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 0.9rem; text-align: center;">No matching configuration in Run A to compare against.</div>`;
                 }
@@ -610,8 +763,9 @@
                             }
                         </h2>
                         <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 20px;">
+                            ${b.avg_time_ms !== undefined ? `
                             <div style="display: flex; justify-content: space-between; font-size: 1.1rem;">
-                                <span style="color: var(--text-muted)">Target ${explicitCrossCompare ? '' : `[${runInfoB}] `}Time:</span>
+                                <span style="color: var(--text-muted)">Target ${explicitCrossCompare ? '' : `[${runInfoB}] `}Response Time:</span>
                                 <span style="color: var(--accent-blue); font-weight: 800;">${b.avg_time_ms} ms</span>
                             </div>
                             <div style="display: flex; justify-content: space-between;">
@@ -622,6 +776,21 @@
                                 <span style="color: var(--text-muted)">Peak PHP Memory:</span>
                                 <span>${b.avg_memory_mb} MB</span>
                             </div>
+                            ` : ''}
+                            ${b.frontend ? `
+                            <div style="display: flex; justify-content: space-between; font-size: 1.1rem; margin-top: ${b.avg_time_ms !== undefined ? '10px' : '0'};">
+                                <span style="color: var(--text-muted)">Target ${explicitCrossCompare ? '' : `[${runInfoB}] `}FCP:</span>
+                                <span style="color: var(--flarum-blue); font-weight: 800;">${b.frontend.avg_fcp_ms} ms</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: var(--text-muted)">DOM Ready:</span>
+                                <span>${b.frontend.avg_dom_ready_ms} ms</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: var(--text-muted)">Full Load:</span>
+                                <span>${b.frontend.avg_load_time_ms} ms</span>
+                            </div>
+                            ` : ''}
                         </div>
                         ${diffHtml}
                         

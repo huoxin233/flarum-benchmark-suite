@@ -89,6 +89,15 @@ on:
         required: true
         default: '["1000"]'
         type: string
+      benchmark-type:
+        description: 'Type of Benchmark (backend, frontend, both)'
+        required: true
+        default: 'backend'
+        type: choice
+        options:
+          - backend
+          - frontend
+          - both
       custom-matrix:
         description: 'Advanced: Custom Matrix Override (JSON)'
         required: false
@@ -198,6 +207,11 @@ on:
         required: false
         default: '["1000"]'
         type: string
+      benchmark-type:
+        description: 'Type of Benchmark (backend, frontend, both)'
+        required: false
+        default: 'backend'
+        type: string
       custom-matrix:
         description: 'Advanced: Custom Matrix Override (JSON)'
         required: false
@@ -235,6 +249,7 @@ jobs:
     steps:
       - id: set-matrix
         env:
+          BENCHMARK_TYPE: ${{ inputs.benchmark-type || 'backend' }}
           CUSTOM: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CUSTOM_MATRIX) || inputs.custom-matrix }}
           PHP_VER: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_PHP_VERSION) || inputs.php-version || '["8.3"]' }}
           FLARUM_VER: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_FLARUM_VERSION) || inputs.flarum-version || '["v1.8.0", "v2.x-dev"]' }}
@@ -265,6 +280,7 @@ jobs:
               --argjson test "$TEST_EXT" \
               --argjson opcache "$OPCACHE" \
               --argjson target "$ENDPOINT" \
+              --arg type "$BENCHMARK_TYPE" \
               --arg users "$USERS" \
               --arg discs "$DISCUSSIONS" \
               --arg posts "$POSTS" \
@@ -288,7 +304,8 @@ jobs:
                     "setup_php": (if ($tgt | type) == "object" then ($tgt."setup-php" // "") else "" end),
                     "users": ($u | tostring),
                     "discussions": ($di | tostring),
-                    "posts": ($pos | tostring)
+                    "posts": ($pos | tostring),
+                    "benchmark_type": $type
                   }
                 ]
               }')
@@ -321,6 +338,9 @@ jobs:
 
 
     steps:
+      - name: Checkout Benchmark Suite
+        uses: actions/checkout@v4
+
       - name: Start Database Container
         if: matrix.database != 'sqlite'
         run: |
@@ -546,20 +566,54 @@ jobs:
           RESULT_FILE="benchmark-result-${{ matrix.flarum-version }}_${SAFE_DB}_debug-${{ matrix.debug }}_core-${{ matrix.core-extensions }}_testexts-${SAFE_TEST_EXT}_opcache-${{ matrix.opcache }}_target-${SAFE_TARGET}_U${USERS}D${DISCUSSIONS}P${POSTS}_vm-${{ matrix.vm_iteration }}.json"
           
           # 1. Run Benchmark ONCE (Outputs Terminal Table to console + saves raw JSON to file)
-          php flarum benchmark:run \
-            --endpoint="$API_ENDPOINT" \
-            --body="$BODY" \
-            --seed-users="$USERS" \
-            --seed-discussions="$DISCUSSIONS" \
-            --seed-posts="$POSTS" \
-            --iterations="$ITERATIONS" \
-            --setup-sql="$SETUP_SQL" \
-            --setup-php="$SETUP_PHP" \
-            --benchmark-sql="$BENCHMARK_SQL" \
-            --benchmark-php="$BENCHMARK_PHP" \
-            --json-out="$RESULT_FILE" \
-            $EXTRA_FLAGS
+          BENCHMARK_TYPE="${{ matrix.benchmark_type || 'backend' }}"
+          FRONTEND_FILE="frontend-result-${{ matrix.flarum-version }}_${SAFE_DB}_debug-${{ matrix.debug }}_core-${{ matrix.core-extensions }}_testexts-${SAFE_TEST_EXT}_opcache-${{ matrix.opcache }}_target-${SAFE_TARGET}_U${USERS}D${DISCUSSIONS}P${POSTS}_vm-${{ matrix.vm_iteration }}.json"
+          
+          if [ "$BENCHMARK_TYPE" == "backend" ] || [ "$BENCHMARK_TYPE" == "both" ]; then
+            php flarum benchmark:run \
+              --endpoint="$API_ENDPOINT" \
+              --body="$BODY" \
+              --seed-users="$USERS" \
+              --seed-discussions="$DISCUSSIONS" \
+              --seed-posts="$POSTS" \
+              --iterations="$ITERATIONS" \
+              --setup-sql="$SETUP_SQL" \
+              --setup-php="$SETUP_PHP" \
+              --benchmark-sql="$BENCHMARK_SQL" \
+              --benchmark-php="$BENCHMARK_PHP" \
+              --json-out="$RESULT_FILE" \
+              $EXTRA_FLAGS
+          elif [ "$BENCHMARK_TYPE" == "frontend" ]; then
+            # Seed the database without running the backend API loops
+            php flarum benchmark:run --seed-only \
+              --seed-users="$USERS" \
+              --seed-discussions="$DISCUSSIONS" \
+              --seed-posts="$POSTS"
+            # Create a dummy backend file so aggregate-report doesn't fail looking for results/*.json
+            echo '{"avg_time_ms":0, "avg_query_time_ms":0, "avg_memory_mb":0, "avg_queries":0, "iterations":[]}' > "$RESULT_FILE"
+          fi
+          
+          if [ "$BENCHMARK_TYPE" == "frontend" ] || [ "$BENCHMARK_TYPE" == "both" ]; then
+            echo "Starting Frontend Playwright Benchmark..."
+            # Start PHP built-in server
+            php -S 127.0.0.1:8000 -t public > server.log 2>&1 &
+            PHP_SERVER_PID=$!
             
+            # Wait for server to boot
+            sleep 3
+            
+            # Install Playwright
+            npm --prefix ../scripts init -y
+            npm --prefix ../scripts install playwright
+            npx playwright install chromium --with-deps
+            
+            # Run the script
+            TARGET_URL="http://127.0.0.1:8000" ITERATIONS="$ITERATIONS" JSON_OUT="$FRONTEND_FILE" node ../scripts/frontend-benchmark.js
+            
+            # Kill server
+            kill $PHP_SERVER_PID || true
+          fi
+          
           # 2. Parse the JSON to generate the Markdown Summary for GitHub Actions UI
           cat << 'EOF' > generate-summary.php
           <?php
@@ -577,6 +631,11 @@ jobs:
           $yAxisTime = implode(', ', $yTime);
           $yAxisQuery = implode(', ', $yQuery);
           $countRuns = count($data['iterations']);
+          
+          if ($countRuns === 0) {
+              file_put_contents(getenv('GITHUB_STEP_SUMMARY'), "### 🌐 Frontend (Playwright) Benchmark Execution\n\n*(Web Vitals were extracted successfully. Results will be available in the aggregated Dashboard at the end of the workflow!)*\n\n", FILE_APPEND);
+              exit(0);
+          }
           
           $lastIter = end($data['iterations']);
           $slowestQueriesMarkdown = "";
@@ -660,7 +719,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results-${{ strategy.job-index }}
-          path: ./flarum-app/benchmark-result-*.json
+          path: |
+            ./flarum-app/benchmark-result-*.json
+            ./flarum-app/frontend-result-*.json
           retention-days: 1
 
   aggregate-report:
@@ -694,8 +755,10 @@ jobs:
           # Use PHP to parse the JSON files and generate the master Mermaid bar chart
           cat << 'EOF' > generate.php
           <?php
-          $files = glob("results/*.json");
-          if (empty($files)) {
+          $files = glob("results/benchmark-result-*.json");
+          $frontendFiles = glob("results/frontend-result-*.json");
+          
+          if (empty($files) && empty($frontendFiles)) {
               echo "No results found.\n";
               exit(0);
           }
@@ -704,6 +767,9 @@ jobs:
           
           foreach ($files as $file) {
               $data = json_decode(file_get_contents($file), true);
+              if (empty($data['avg_time_ms']) && empty($data['iterations'])) {
+                  continue;
+              }
               $name = str_replace(['results/benchmark-result-', '.json'], '', $file);
               $baseName = preg_replace('/_vm-\d+$/', '', $name);
               
@@ -728,8 +794,10 @@ jobs:
           $queryTimes = [];
           $memories = [];
           
-          echo "| ID | VMs | Flarum | DB Engine | Target | Avg Time | Avg DB Queries | Peak Memory |\n";
-          echo "|----|-----|--------|-----------|--------|----------|----------------|-------------|\n";
+          if (!empty($groupedData)) {
+              echo "| ID | VMs | Flarum | DB Engine | Target | Avg Time | Avg DB Queries | Peak Memory |\n";
+              echo "|----|-----|--------|-----------|--------|----------|----------------|-------------|\n";
+          }
           
           $id = 1;
           foreach ($groupedData as $baseName => $group) {
@@ -778,10 +846,11 @@ jobs:
           $yQ = implode(', ', $queryTimes);
           $yMem = implode(', ', $memories);
           
-          $maxTime = ceil(max(array_merge($times, $queryTimes)) * 1.15);
-          $maxMem = ceil(max($memories) * 1.15);
+          $maxTime = ceil(max(empty($times) && empty($queryTimes) ? [0] : array_merge($times, $queryTimes)) * 1.15);
+          $maxMem = ceil(max(empty($memories) ? [0] : $memories) * 1.15);
           
-          $mermaid = <<<MD
+          if (!empty($labels)) {
+              $mermaid = <<<MD
 
           ```mermaid
           %%{init: { "theme": "default", "themeVariables": { "xyChart": { "plotColorPalette": "#3b82f6,#ef4444" } } } }%%
@@ -804,7 +873,65 @@ jobs:
           ```
           MD;
           
-          file_put_contents(getenv('GITHUB_STEP_SUMMARY'), $mermaid . "\n", FILE_APPEND);
+              file_put_contents(getenv('GITHUB_STEP_SUMMARY'), $mermaid . "\n", FILE_APPEND);
+          }
+          
+          // --- FRONTEND RESULTS ---
+          if (!empty($frontendFiles)) {
+              echo "\n\n### 🌐 Frontend (Playwright) Web Vitals Summary\n\n";
+              echo "| ID | VMs | Flarum | DB Engine | Target | LCP/FCP | DOM Ready | Full Load | JS Heap |\n";
+              echo "|----|-----|--------|-----------|--------|---------|-----------|-----------|---------|\n";
+              
+              $groupedFrontend = [];
+              foreach ($frontendFiles as $file) {
+                  $data = json_decode(file_get_contents($file), true);
+                  $name = str_replace(['results/frontend-result-', '.json'], '', $file);
+                  $baseName = preg_replace('/_vm-\d+$/', '', $name);
+                  
+                  if (!isset($groupedFrontend[$baseName])) {
+                      $groupedFrontend[$baseName] = [
+                          'sum_load' => 0, 'sum_dom' => 0, 'sum_fcp' => 0, 'sum_js' => 0, 'count' => 0
+                      ];
+                  }
+                  $groupedFrontend[$baseName]['sum_load'] += $data['avg_load_time_ms'] ?? 0;
+                  $groupedFrontend[$baseName]['sum_dom'] += $data['avg_dom_ready_ms'] ?? 0;
+                  $groupedFrontend[$baseName]['sum_fcp'] += $data['avg_fcp_ms'] ?? 0;
+                  $groupedFrontend[$baseName]['sum_js'] += $data['avg_js_heap_mb'] ?? 0;
+                  $groupedFrontend[$baseName]['count']++;
+              }
+              
+              $id = 1;
+              foreach ($groupedFrontend as $baseName => $group) {
+                  $count = $group['count'];
+                  $avgLoad = round($group['sum_load'] / $count, 0);
+                  $avgDom = round($group['sum_dom'] / $count, 0);
+                  $avgFcp = round($group['sum_fcp'] / $count, 0);
+                  $avgJs = round($group['sum_js'] / $count, 1);
+                  
+                  $parts = explode('_', $baseName);
+                  $flarum = $parts[0] ?? 'Unknown';
+                  $db = $parts[1] ?? 'Unknown';
+                  $debugState = str_replace('debug-', '', $parts[2] ?? 'false');
+                  $coreState = str_replace('core-', '', $parts[3] ?? 'true');
+                  $testExtState = str_replace('testexts-', '', $parts[4] ?? '');
+                  $opcacheState = str_replace('opcache-', '', $parts[5] ?? 'false');
+                  $targetState = ltrim(str_replace(['target-', '.json'], '', $parts[6] ?? 'Unknown'), '-');
+                  $seedState = str_replace('.json', '', $parts[7] ?? '');
+                  
+                  $debugLabel = $debugState === 'true' ? ' (Debug)' : '';
+                  $coreLabel = $coreState === 'false' ? ' (Naked)' : '';
+                  $opcacheLabel = $opcacheState === 'true' ? ' (OPcache)' : '';
+                  $extString = str_replace('+', ', ', $testExtState);
+                  $testExtLabel = $testExtState !== '' ? " (+{$extString})" : '';
+                  
+                  $displayTarget = $targetState;
+                  if ($seedState) { $displayTarget .= " (Size: {$seedState})"; }
+                  
+                  $shortLabel = "F" . $id;
+                  echo "| **{$shortLabel}** | {$count} | `{$flarum}{$debugLabel}{$coreLabel}{$testExtLabel}{$opcacheLabel}` | `{$db}` | `{$displayTarget}` | **{$avgFcp} ms** | {$avgDom} ms | {$avgLoad} ms | {$avgJs} MB |\n";
+                  $id++;
+              }
+          }
           EOF
           
           php generate.php >> $GITHUB_STEP_SUMMARY
@@ -822,11 +949,17 @@ jobs:
         run: |
           cat << 'EOF' > generate-html.php
           <?php
-          $files = glob("results/*.json");
+          $files = glob("results/benchmark-result-*.json");
+          $frontendFiles = glob("results/frontend-result-*.json");
+          
           $groupedData = [];
+          $groupedFrontend = [];
           
           foreach ($files as $file) {
               $data = json_decode(file_get_contents($file), true);
+              if (empty($data['avg_time_ms']) && empty($data['iterations'])) {
+                  continue;
+              }
               $name = str_replace(['results/benchmark-result-', '.json'], '', $file);
               $baseName = preg_replace('/_vm-\d+$/', '', $name);
               
@@ -865,29 +998,33 @@ jobs:
               }
           }
           
-          $allData = [];
-          
-          foreach ($groupedData as $baseName => $group) {
-              $vmCount = $group['count'];
+          foreach ($frontendFiles as $file) {
+              $data = json_decode(file_get_contents($file), true);
+              $name = str_replace(['results/frontend-result-', '.json'], '', $file);
+              $baseName = preg_replace('/_vm-\d+$/', '', $name);
               
-              $avgTime = round($group['sum_time'] / $vmCount, 2);
-              $avgQueryTime = round($group['sum_query_time'] / $vmCount, 2);
-              $avgMemory = round($group['sum_memory'] / $vmCount, 2);
-              $avgQueries = round($group['sum_queries'] / $vmCount, 1);
-              $avgPhpCpuTime = round($avgTime - $avgQueryTime, 2);
-              
-              $avgQueriesBreakdown = [];
-              foreach ($group['queries'] as $sql => $qData) {
-                  $avgQueriesBreakdown[$sql] = [
-                      'count' => round($qData['sum_count'] / $vmCount, 1),
-                      'time_ms' => round($qData['sum_time_ms'] / $vmCount, 2)
+              if (!isset($groupedFrontend[$baseName])) {
+                  $groupedFrontend[$baseName] = [
+                      'sum_load' => 0, 'sum_dom' => 0, 'sum_fcp' => 0, 'sum_js' => 0, 'count' => 0
                   ];
               }
-              
-              uasort($avgQueriesBreakdown, function($a, $b) {
-                  return $b['time_ms'] <=> $a['time_ms'];
-              });
-              
+              $groupedFrontend[$baseName]['sum_load'] += $data['avg_load_time_ms'] ?? 0;
+              $groupedFrontend[$baseName]['sum_dom'] += $data['avg_dom_ready_ms'] ?? 0;
+              $groupedFrontend[$baseName]['sum_fcp'] += $data['avg_fcp_ms'] ?? 0;
+              $groupedFrontend[$baseName]['sum_js'] += $data['avg_js_heap_mb'] ?? 0;
+              $groupedFrontend[$baseName]['count']++;
+          }
+          
+          foreach ($allData as $formattedName => &$runData) {
+              // Unformat formattedName back to baseName (roughly)
+              // Actually it's better to iterate over groupedData where baseName is known
+          }
+          
+          // Re-doing the merge cleanly using baseName
+          $allData = [];
+          $allBaseNames = array_unique(array_merge(array_keys($groupedData), array_keys($groupedFrontend)));
+          
+          foreach ($allBaseNames as $baseName) {
               $parts = explode('_', $baseName);
               $debugState = str_replace('debug-', '', $parts[2] ?? 'false');
               $coreState = str_replace('core-', '', $parts[3] ?? 'true');
@@ -904,19 +1041,49 @@ jobs:
               $coreLabel = $coreState === 'false' ? ' (Naked)' : '';
               $opcacheLabel = $opcacheState === 'true' ? ' (OPcache)' : '';
               
-              $extString = str_replace('_', ', ', $testExtState);
+              $extString = str_replace('+', ', ', $testExtState);
               $testExtLabel = $testExtState !== '' ? " (+{$extString})" : '';
               
               $formattedName = $parts[0] . '_' . $parts[1] . $debugLabel . $coreLabel . $testExtLabel . $opcacheLabel . '_' . $targetState;
               
-              $allData[$formattedName] = [
-                  'avg_time_ms' => $avgTime,
-                  'avg_query_time_ms' => $avgQueryTime,
-                  'avg_memory_mb' => $avgMemory,
-                  'avg_queries' => $avgQueries,
-                  'avg_php_cpu_time_ms' => $avgPhpCpuTime,
-                  'queries' => $avgQueriesBreakdown
-              ];
+              $mergedData = [];
+              
+              if (isset($groupedData[$baseName])) {
+                  $group = $groupedData[$baseName];
+                  $vmCount = $group['count'];
+                  $avgTime = round($group['sum_time'] / $vmCount, 2);
+                  $avgQueryTime = round($group['sum_query_time'] / $vmCount, 2);
+                  $mergedData = [
+                      'avg_time_ms' => $avgTime,
+                      'avg_query_time_ms' => $avgQueryTime,
+                      'avg_memory_mb' => round($group['sum_memory'] / $vmCount, 2),
+                      'avg_queries' => round($group['sum_queries'] / $vmCount, 1),
+                      'avg_php_cpu_time_ms' => round($avgTime - $avgQueryTime, 2),
+                  ];
+                  
+                  $avgQueriesBreakdown = [];
+                  foreach ($group['queries'] as $sql => $qData) {
+                      $avgQueriesBreakdown[$sql] = [
+                          'count' => round($qData['sum_count'] / $vmCount, 1),
+                          'time_ms' => round($qData['sum_time_ms'] / $vmCount, 2)
+                      ];
+                  }
+                  uasort($avgQueriesBreakdown, function($a, $b) { return $b['time_ms'] <=> $a['time_ms']; });
+                  $mergedData['queries'] = $avgQueriesBreakdown;
+              }
+              
+              if (isset($groupedFrontend[$baseName])) {
+                  $group = $groupedFrontend[$baseName];
+                  $vmCount = $group['count'];
+                  $mergedData['frontend'] = [
+                      'avg_load_time_ms' => round($group['sum_load'] / $vmCount, 0),
+                      'avg_dom_ready_ms' => round($group['sum_dom'] / $vmCount, 0),
+                      'avg_fcp_ms' => round($group['sum_fcp'] / $vmCount, 0),
+                      'avg_js_heap_mb' => round($group['sum_js'] / $vmCount, 2)
+                  ];
+              }
+              
+              $allData[$formattedName] = $mergedData;
           }
           
           $currentRun = [
