@@ -951,6 +951,11 @@ jobs:
         env:
           CLEAR_HISTORY: ${{ vars.BENCHMARK_CLEAR_HISTORY == 'true' || inputs.clear-history == true }}
         run: |
+          # Copy previous historical lighthouse files so they aren't deleted by force_orphan deployment
+          if [ "$CLEAR_HISTORY" != "true" ] && [ -d "previous-gh-pages" ]; then
+            cp previous-gh-pages/lighthouse-*.html dashboard/ 2>/dev/null || true
+          fi
+          
           cat << 'EOF' > generate-html.php
           <?php
           $files = glob("results/benchmark-result-*.json");
@@ -1101,7 +1106,8 @@ jobs:
               
               if (isset($groupedLighthouse[$baseName])) {
                   $rawFile = $groupedLighthouse[$baseName];
-                  $cleanName = "lighthouse-{$baseName}.html";
+                  $runId = getenv('GITHUB_RUN_ID');
+                  $cleanName = "lighthouse-{$baseName}-{$runId}.html";
                   copy($rawFile, "dashboard/{$cleanName}");
                   $mergedData['lighthouse'] = $cleanName;
               }
