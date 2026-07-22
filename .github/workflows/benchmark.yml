@@ -514,11 +514,11 @@ jobs:
           POSTS="${{ matrix.posts }}"
           POSTS="${POSTS:-1000}"
           ITERATIONS="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_ITERATIONS) || inputs.iterations || '5' }}"
-          SHOW_RESPONSE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_SHOW_RESPONSE) || inputs.show-response || 'false' }}"
-          CLEAR_CACHE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CLEAR_CACHE) || inputs.clear-cache || 'true' }}"
-          WARMUP="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_WARMUP) || inputs.warmup || 'true' }}"
-          LIGHTHOUSE_ENABLE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_LIGHTHOUSE_ENABLE) || inputs.lighthouse || 'true' }}"
-          LIGHTHOUSE_DEVICE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_LIGHTHOUSE_DEVICE) || inputs.lighthouse-device || 'desktop' }}"
+          SHOW_RESPONSE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_SHOW_RESPONSE) || inputs.show-response }}"
+          CLEAR_CACHE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CLEAR_CACHE) || inputs.clear-cache }}"
+          WARMUP="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_WARMUP) || inputs.warmup }}"
+          LIGHTHOUSE_ENABLE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_LIGHTHOUSE_ENABLE) || inputs.lighthouse }}"
+          LIGHTHOUSE_DEVICE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_LIGHTHOUSE_DEVICE) || inputs.lighthouse-device }}"
           
           TARGET_TYPE="${{ matrix.target_type || 'api' }}"
           TARGET_VALUE="${{ matrix.target_value || matrix.endpoint }}"
@@ -985,7 +985,7 @@ jobs:
 
       - name: Generate Interactive HTML Dashboard
         env:
-          CLEAR_HISTORY: ${{ vars.BENCHMARK_CLEAR_HISTORY == 'true' || inputs.clear-history == true }}
+          CLEAR_HISTORY: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CLEAR_HISTORY) || inputs.clear-history }}
         run: |
           # Copy previous historical lighthouse files so they aren't deleted by force_orphan deployment
           if [ "$CLEAR_HISTORY" != "true" ] && [ -d "previous-gh-pages" ]; then
@@ -1186,7 +1186,7 @@ jobs:
           echo -e "\n\n---\n\n### 🌍 [View Live Interactive Dashboard](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/)" >> $GITHUB_STEP_SUMMARY
 
       - name: Deploy Dashboard to GitHub Pages
-        if: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_DEPLOY_DASHBOARD != 'false') || (inputs.use-repo-vars != true && inputs.deploy-dashboard != false) }}
+        if: ${{ (inputs.use-repo-vars == true && vars.BENCHMARK_DEPLOY_DASHBOARD == 'true') || (inputs.deploy-dashboard == true && (inputs.use-repo-vars != true || vars.BENCHMARK_DEPLOY_DASHBOARD != 'false')) }}
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
