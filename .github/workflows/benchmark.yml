@@ -431,7 +431,7 @@ jobs:
             cat <<EOF > install.yml
           debug: ${{ matrix.debug }}
           extensions: '$ENABLED_EXTENSIONS'
-          url: 'http://localhost'
+          url: 'http://127.0.0.1:8000'
           adminUser: 'admin'
           adminPassword: 'password'
           adminEmail: 'admin@example.com'
@@ -443,7 +443,7 @@ jobs:
             cat <<EOF > install.yml
           debug: ${{ matrix.debug }}
           extensions: '$ENABLED_EXTENSIONS'
-          url: 'http://localhost'
+          url: 'http://127.0.0.1:8000'
           adminUser: 'admin'
           adminPassword: 'password'
           adminEmail: 'admin@example.com'
@@ -460,32 +460,9 @@ jobs:
           # Run the Flarum installer
           php flarum install --file=install.yml
           
-          # Enable Test Extensions AFTER install to prevent Eloquent Model crashes
-          if [ "$TEST_EXT_IDS" != "" ]; then
-            echo "Enabling Test Extensions safely..."
-            cat <<EOF > enable-exts.php
-          <?php
-          require 'vendor/autoload.php';
-          \$app = require 'site.php';
-          if (!\$app instanceof \Flarum\Foundation\InstalledSite) {
-            \$app = require 'bootstrap.php';
-          }
-          \$server = \$app->bootApp();
-          \$manager = \$server->getContainer()->make(\Flarum\Extension\ExtensionManager::class);
-          
-          \$exts = explode(',', '$TEST_EXT_IDS');
-          foreach (\$exts as \$id) {
-              if (empty(\$id)) continue;
-              echo "Enabling \$id...\n";
-              try {
-                  \$manager->enable(\$id);
-              } catch (\Throwable \$e) {
-                  echo "Warning: Failed to enable \$id: " . \$e->getMessage() . "\n";
-              }
-          }
-          EOF
-            php enable-exts.php
-          fi
+          # Force the correct URL in config.php
+          php -r "\$c = file_get_contents('config.php'); file_put_contents('config.php', preg_replace('/\'url\'\s*=>\s*\'.*?\'/', '\'url\' => \'http://127.0.0.1:8000\'', \$c));"
+
 
       - name: Show Flarum Info
         working-directory: ./flarum-app
@@ -568,6 +545,7 @@ jobs:
           # 1. Run Benchmark ONCE (Outputs Terminal Table to console + saves raw JSON to file)
           BENCHMARK_TYPE="${{ matrix.benchmark_type || 'backend' }}"
           FRONTEND_FILE="frontend-result-${{ matrix.flarum-version }}_${SAFE_DB}_debug-${{ matrix.debug }}_core-${{ matrix.core-extensions }}_testexts-${SAFE_TEST_EXT}_opcache-${{ matrix.opcache }}_target-${SAFE_TARGET}_U${USERS}D${DISCUSSIONS}P${POSTS}_vm-${{ matrix.vm_iteration }}.json"
+          LIGHTHOUSE_FILE="lighthouse-result-${{ matrix.flarum-version }}_${SAFE_DB}_debug-${{ matrix.debug }}_core-${{ matrix.core-extensions }}_testexts-${SAFE_TEST_EXT}_opcache-${{ matrix.opcache }}_target-${SAFE_TARGET}_U${USERS}D${DISCUSSIONS}P${POSTS}_vm-${{ matrix.vm_iteration }}.html"
           
           if [ "$BENCHMARK_TYPE" == "backend" ] || [ "$BENCHMARK_TYPE" == "both" ]; then
             php flarum benchmark:run \
@@ -595,20 +573,45 @@ jobs:
           
           if [ "$BENCHMARK_TYPE" == "frontend" ] || [ "$BENCHMARK_TYPE" == "both" ]; then
             echo "Starting Frontend Playwright Benchmark..."
-            # Start PHP built-in server
-            php -S 127.0.0.1:8000 -t public > server.log 2>&1 &
+            # Clear cache so Flarum recompiles JS to include programmatically enabled extensions (like lang-english)
+            php flarum cache:clear || true
+            php flarum assets:publish || true
+            
+            # Write router.php. chdir(__DIR__) is critical: without a router, PHP sets
+            # CWD to public/ per-request. With a router, CWD stays as the launch dir
+            # (flarum-app/), breaking Flarum's relative require('../site.php').
+            echo '<?php' > public/router.php
+            echo '$uri = urldecode(parse_url($_SERVER["REQUEST_URI"], PHP_URL_PATH));' >> public/router.php
+            echo 'if ($uri !== "/" && file_exists(__DIR__ . $uri)) { return false; }' >> public/router.php
+            echo '$_SERVER["SCRIPT_NAME"] = "/index.php";' >> public/router.php
+            echo '$_SERVER["SCRIPT_FILENAME"] = __DIR__ . "/index.php";' >> public/router.php
+            echo '$_SERVER["PHP_SELF"] = "/index.php";' >> public/router.php
+            echo 'chdir(__DIR__);' >> public/router.php
+            echo 'require __DIR__ . "/index.php";' >> public/router.php
+            
+            # Start PHP built-in server with workers so exit() in Flarum's index.php
+            # only kills the request's worker process, not the entire server.
+            PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:8000 -t public public/router.php > server.log 2>&1 &
             PHP_SERVER_PID=$!
             
-            # Wait for server to boot
-            sleep 3
             
             # Install Playwright
-            npm --prefix ../scripts init -y
-            npm --prefix ../scripts install playwright
-            npx playwright install chromium --with-deps
+            (cd ../scripts && npm init -y > /dev/null 2>&1)
+            (cd ../scripts && npm install playwright > /dev/null 2>&1)
+            (cd ../scripts && npx playwright install chromium --with-deps)
             
             # Run the script
             TARGET_URL="http://127.0.0.1:8000" ITERATIONS="$ITERATIONS" JSON_OUT="$FRONTEND_FILE" node ../scripts/frontend-benchmark.js
+            
+            # Run Lighthouse in desktop mode
+            echo "Running Google Lighthouse Audit..."
+            npm install -g lighthouse > /dev/null 2>&1
+            lighthouse "http://127.0.0.1:8000" \
+              --output html \
+              --output-path "$LIGHTHOUSE_FILE" \
+              --preset=desktop \
+              --throttling-method=provided \
+              --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage"
             
             # Kill server
             kill $PHP_SERVER_PID || true
@@ -722,6 +725,7 @@ jobs:
           path: |
             ./flarum-app/benchmark-result-*.json
             ./flarum-app/frontend-result-*.json
+            ./flarum-app/lighthouse-result-*.html
           retention-days: 1
 
   aggregate-report:
@@ -951,9 +955,17 @@ jobs:
           <?php
           $files = glob("results/benchmark-result-*.json");
           $frontendFiles = glob("results/frontend-result-*.json");
+          $lighthouseFiles = glob("results/lighthouse-result-*.html");
           
           $groupedData = [];
           $groupedFrontend = [];
+          $groupedLighthouse = [];
+          
+          foreach ($lighthouseFiles as $file) {
+              $name = str_replace(['results/lighthouse-result-', '.html'], '', $file);
+              $baseName = preg_replace('/_vm-\d+$/', '', $name);
+              $groupedLighthouse[$baseName] = $file;
+          }
           
           foreach ($files as $file) {
               $data = json_decode(file_get_contents($file), true);
@@ -1022,7 +1034,11 @@ jobs:
           
           // Re-doing the merge cleanly using baseName
           $allData = [];
-          $allBaseNames = array_unique(array_merge(array_keys($groupedData), array_keys($groupedFrontend)));
+          $allBaseNames = array_unique(array_merge(
+              array_keys($groupedData),
+              array_keys($groupedFrontend),
+              array_keys($groupedLighthouse)
+          ));
           
           foreach ($allBaseNames as $baseName) {
               $parts = explode('_', $baseName);
@@ -1081,6 +1097,13 @@ jobs:
                       'avg_fcp_ms' => round($group['sum_fcp'] / $vmCount, 0),
                       'avg_js_heap_mb' => round($group['sum_js'] / $vmCount, 2)
                   ];
+              }
+              
+              if (isset($groupedLighthouse[$baseName])) {
+                  $rawFile = $groupedLighthouse[$baseName];
+                  $cleanName = "lighthouse-{$baseName}.html";
+                  copy($rawFile, "dashboard/{$cleanName}");
+                  $mergedData['lighthouse'] = $cleanName;
               }
               
               $allData[$formattedName] = $mergedData;
