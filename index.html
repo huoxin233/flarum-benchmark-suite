@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flarum Benchmark Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --flarum-orange: #E7672E;
+            --flarum-dark: #1D262F;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        body { 
+            font-family: 'Inter', system-ui, sans-serif; 
+            margin: 0; 
+            padding: 40px 20px; 
+            background: linear-gradient(135deg, var(--flarum-dark) 0%, #0f172a 100%); 
+            color: var(--text-main);
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            animation: fadeInDown 0.8s ease-out;
+        }
+        h1 { 
+            color: var(--flarum-orange); 
+            font-weight: 800;
+            font-size: 2.8rem;
+            margin: 0 0 10px 0;
+            letter-spacing: -1px;
+            text-shadow: 0 4px 20px rgba(231, 103, 46, 0.3);
+        }
+        .header p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            margin: 0;
+        }
+        
+        /* TABS */
+        .tabs {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 40px;
+        }
+        .tab-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .tab-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .tab-btn.active {
+            background: rgba(231, 103, 46, 0.2);
+            border-color: var(--flarum-orange);
+            color: var(--flarum-orange);
+        }
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.4s ease-out;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 30px;
+        }
+        .card { 
+            background: rgba(255, 255, 255, 0.03); 
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 25px; 
+            border-radius: 16px; 
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2); 
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+            border-color: rgba(231, 103, 46, 0.2);
+        }
+        .card.full-width {
+            grid-column: 1 / -1;
+        }
+        h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 0 0 25px 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        h2::before {
+            content: '';
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: var(--flarum-orange);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--flarum-orange);
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 350px;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 30px;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0,0,0,0.2);
+            padding: 20px;
+            border-radius: 12px;
+        }
+        select {
+            padding: 12px 20px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            font-size: 0.95rem;
+            outline: none;
+            cursor: pointer;
+            max-width: 320px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+        select option {
+            background: var(--flarum-dark);
+            color: white;
+        }
+        .diff-positive { color: #10b981; }
+        .diff-negative { color: #ef4444; }
+        
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Flarum Benchmark Suite</h1>
+            <p>Performance Tracking & Analysis</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('latest')">Backend API Configurations</button>
+            <button class="tab-btn" onclick="switchTab('frontend')">Frontend Browser Metrics</button>
+            <button class="tab-btn" onclick="switchTab('history')">Historical Trends</button>
+        </div>
+        
+        <!-- LATEST SECTION -->
+        <div id="tab-latest" class="tab-content active">
+            <div class="grid">
+                <div class="card">
+                    <h2>Average API Response Time</h2>
+                    <div class="chart-container">
+                        <canvas id="barChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>Database Queries Executed</h2>
+                    <div class="chart-container">
+                        <canvas id="queryChart"></canvas>
+                    </div>
+                </div>
+    
+                <div class="card">
+                    <h2>Peak Memory Usage (MB)</h2>
+                    <div class="chart-container">
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>PHP Execution Time (ms)</h2>
+                    <div class="chart-container">
+                        <canvas id="cpuChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FRONTEND SECTION -->
+        <div id="tab-frontend" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h2>First Contentful Paint (FCP)</h2>
+                    <div class="chart-container">
+                        <canvas id="fcpChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>DOM Ready Time</h2>
+                    <div class="chart-container">
+                        <canvas id="domChart"></canvas>
+                    </div>
+                </div>
+    
+                <div class="card">
+                    <h2>Total Load Time</h2>
+                    <div class="chart-container">
+                        <canvas id="loadChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>JS Heap Size (MB)</h2>
+                    <div class="chart-container">
+                        <canvas id="jsChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HISTORY SECTION -->
+        <div id="tab-history" class="tab-content">
+            <div class="card full-width" style="margin-bottom: 40px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 15px;">
+                    <h2 style="margin: 0;">Historical Performance Trend</h2>
+                    <select id="historyMetricSelect" onchange="initHistoryChart()" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); padding: 8px 15px;">
+                        <option value="avg_time_ms">Avg Response Time (ms)</option>
+                        <option value="avg_queries">Database Queries Executed</option>
+                        <option value="avg_memory_mb">Peak Memory Usage (MB)</option>
+                        <option value="avg_php_cpu_time_ms">PHP Execution Time (ms)</option>
+                        <optgroup label="Frontend (Playwright)">
+                            <option value="frontend.avg_fcp_ms">First Contentful Paint (ms)</option>
+                            <option value="frontend.avg_dom_ready_ms">DOM Ready Time (ms)</option>
+                            <option value="frontend.avg_load_time_ms">Total Load Time (ms)</option>
+                            <option value="frontend.avg_js_heap_mb">JS Heap Size (MB)</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div class="chart-container" style="height: 400px;">
+                    <canvas id="historyChart"></canvas>
+                </div>
+            </div>
+    
+            <h2 style="text-align: center; margin-top: 60px; font-size: 2rem;">Cross-Compare Runs</h2>
+            <div class="controls">
+                <div style="display: flex; flex-direction: column; gap: 5px;">
+                    <label style="color: var(--text-muted); font-size: 0.9rem;">Baseline (Run A)</label>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <select id="runA"></select>
+                        <select id="dataA"></select>
+                    </div>
+                </div>
+                
+                <span style="font-weight: 800; font-size: 1.2rem; color: var(--flarum-orange); margin: 0 10px; align-self: center;">VS</span>
+                
+                <div style="display: flex; flex-direction: column; gap: 5px;">
+                    <label style="color: var(--text-muted); font-size: 0.9rem;">Target (Run B)</label>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <select id="runB"></select>
+                        <select id="dataB"></select>
+                    </div>
+                </div>
+            </div>
+    
+            <div class="grid" id="compareGrid">
+                <!-- Dynamic comparison cards will be rendered here -->
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById('tab-' + tabId).classList.add('active');
+        }
+
+        // Global Chart Defaults
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.font.family = "'Inter', sans-serif";
+        Chart.defaults.scale.grid.color = 'rgba(255, 255, 255, 0.05)';
+
+        let historyData = [];
+        let historyChartInstance = null;
+
+        function formatLabel(rawKey) {
+            return rawKey.split('_').join(' ').replace('-api-', '/api/').replace('-sql-', 'SQL: ');
+        }
+
+        // Fetch the historical JSON generated by GitHub Actions
+        fetch('history.json?t=' + new Date().getTime()).then(r => r.json()).then(data => {
+            historyData = data;
+            if(!historyData || historyData.length === 0) return;
+            
+            initLatestCharts();
+            initHistoryChart();
+            initCompareDropdowns();
+            renderCompare();
+        }).catch(err => {
+            console.error("Failed to load history.json.", err);
+            document.querySelector('.container').innerHTML += `
+                <div style="text-align:center; padding: 40px; background: rgba(239, 68, 68, 0.1); border-radius: 12px; margin-top: 20px; border: 1px solid rgba(239, 68, 68, 0.3);">
+                    <h3 style="color: #ef4444;">No history data found!</h3>
+                    <p style="color: var(--text-muted);">Please run the Benchmark workflow in GitHub Actions to generate history.json.</p>
+                </div>
+            `;
+        });
+
+        function initLatestCharts() {
+            const latestRun = historyData[historyData.length - 1].data;
+            const rawLabels = Object.keys(latestRun);
+            const prettyLabels = rawLabels.map(formatLabel);
+            
+            const avgTimes = rawLabels.map(l => latestRun[l].avg_time_ms);
+            const avgQueries = rawLabels.map(l => latestRun[l].avg_queries);
+            const avgMemory = rawLabels.map(l => latestRun[l].avg_memory_mb);
+            const avgCpu = rawLabels.map(l => latestRun[l].avg_php_cpu_time_ms);
+            
+            new Chart(document.getElementById('barChart'), {
+                type: 'bar',
+                data: {
+                    labels: prettyLabels,
+                    datasets: [{
+                        label: 'Avg Response Time (ms)',
+                        data: avgTimes,
+                        backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                        borderColor: '#3b82f6',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+
+            new Chart(document.getElementById('queryChart'), {
+                type: 'bar',
+                data: {
+                    labels: prettyLabels,
+                    datasets: [{
+                        label: 'Average DB Queries',
+                        data: avgQueries,
+                        backgroundColor: 'rgba(231, 103, 46, 0.8)',
+                        borderColor: '#E7672E',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+
+            new Chart(document.getElementById('memoryChart'), {
+                type: 'bar',
+                data: {
+                    labels: prettyLabels,
+                    datasets: [{
+                        label: 'Peak Memory (MB)',
+                        data: avgMemory,
+                        backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                        borderColor: '#10b981',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+
+            new Chart(document.getElementById('cpuChart'), {
+                type: 'bar',
+                data: {
+                    labels: prettyLabels,
+                    datasets: [{
+                        label: 'PHP Execution Time (ms)',
+                        data: avgCpu,
+                        backgroundColor: 'rgba(139, 92, 246, 0.8)',
+                        borderColor: '#8b5cf6',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+
+            // Frontend Metrics
+            const hasFrontend = rawLabels.some(l => latestRun[l].frontend);
+            
+            if (hasFrontend) {
+                const avgFcp = rawLabels.map(l => latestRun[l].frontend ? latestRun[l].frontend.avg_fcp_ms : 0);
+                const avgDom = rawLabels.map(l => latestRun[l].frontend ? latestRun[l].frontend.avg_dom_ready_ms : 0);
+                const avgLoad = rawLabels.map(l => latestRun[l].frontend ? latestRun[l].frontend.avg_load_time_ms : 0);
+                const avgJs = rawLabels.map(l => latestRun[l].frontend ? latestRun[l].frontend.avg_js_heap_mb : 0);
+
+                new Chart(document.getElementById('fcpChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: prettyLabels,
+                        datasets: [{
+                            label: 'First Contentful Paint (ms)',
+                            data: avgFcp,
+                            backgroundColor: 'rgba(234, 179, 8, 0.8)',
+                            borderColor: '#eab308',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                new Chart(document.getElementById('domChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: prettyLabels,
+                        datasets: [{
+                            label: 'DOM Ready Time (ms)',
+                            data: avgDom,
+                            backgroundColor: 'rgba(249, 115, 22, 0.8)',
+                            borderColor: '#f97316',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                new Chart(document.getElementById('loadChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: prettyLabels,
+                        datasets: [{
+                            label: 'Total Load Time (ms)',
+                            data: avgLoad,
+                            backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                            borderColor: '#ef4444',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                new Chart(document.getElementById('jsChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: prettyLabels,
+                        datasets: [{
+                            label: 'JS Heap Size (MB)',
+                            data: avgJs,
+                            backgroundColor: 'rgba(6, 182, 212, 0.8)',
+                            borderColor: '#06b6d4',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+            } else {
+                document.getElementById('tab-frontend').innerHTML = `
+                    <div style="text-align:center; padding: 40px; background: rgba(255, 255, 255, 0.05); border-radius: 12px; margin-top: 20px;">
+                        <h3 style="color: var(--text-muted);">No Frontend Data Available</h3>
+                        <p style="color: var(--text-muted); font-size: 0.9rem;">Run the benchmark with <code>benchmark-type: frontend</code> or <code>both</code> to generate Playwright metrics.</p>
+                    </div>
+                `;
+            }
+        }
+
+        function initHistoryChart() {
+            if (!historyData || historyData.length === 0) return;
+            
+            if (historyChartInstance) {
+                historyChartInstance.destroy();
+            }
+            
+            const metricKey = document.getElementById('historyMetricSelect').value;
+            
+            const labels = historyData.map(run => {
+                const date = new Date(run.timestamp * 1000).toLocaleDateString();
+                return `#${run.id} (${run.commit.substring(0,7)})`;
+            });
+            
+            const latestRun = historyData[historyData.length - 1].data;
+            const matrixKeys = Object.keys(latestRun);
+            
+            const datasets = matrixKeys.map((key, i) => {
+                const color = `hsl(${(i * 137) % 360}, 70%, 50%)`;
+                return {
+                    label: formatLabel(key),
+                    data: historyData.map(run => {
+                        const runData = run.data[key];
+                        if (!runData) return null;
+                        if (metricKey.startsWith('frontend.')) {
+                            const fKey = metricKey.split('.')[1];
+                            return runData.frontend ? runData.frontend[fKey] : null;
+                        }
+                        return runData[metricKey] !== undefined ? runData[metricKey] : null;
+                    }),
+                    borderColor: color,
+                    backgroundColor: color,
+                    tension: 0.3,
+                    borderWidth: 3,
+                    pointRadius: 6, // Make points larger so they are visible even with 1 run
+                    pointHoverRadius: 8
+                };
+            });
+
+            const ctx = document.getElementById('historyChart');
+            historyChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: { labels, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: { 
+                        tooltip: { mode: 'index', intersect: false },
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+        }
+
+        function initCompareDropdowns() {
+            const selectRunA = document.getElementById('runA');
+            const selectRunB = document.getElementById('runB');
+            
+            historyData.forEach((run, index) => {
+                const date = new Date(run.timestamp * 1000).toLocaleString();
+                const optionText = `Run #${run.id} - ${run.commit.substring(0,7)} (${date})`;
+                
+                selectRunA.add(new Option(optionText, index));
+                selectRunB.add(new Option(optionText, index));
+            });
+            
+            if (historyData.length > 1) {
+                selectRunA.value = historyData.length - 2;
+                selectRunB.value = historyData.length - 1;
+            } else {
+                selectRunA.value = 0;
+                selectRunB.value = 0;
+            }
+
+            selectRunA.addEventListener('change', () => { updateDataDropdown('A'); renderCompare(); });
+            selectRunB.addEventListener('change', () => { updateDataDropdown('B'); renderCompare(); });
+            
+            document.getElementById('dataA').addEventListener('change', renderCompare);
+            document.getElementById('dataB').addEventListener('change', renderCompare);
+            
+            updateDataDropdown('A');
+            updateDataDropdown('B');
+        }
+
+        function updateDataDropdown(side) {
+            const runIdx = document.getElementById('run' + side).value;
+            const dataSelect = document.getElementById('data' + side);
+            
+            const prevVal = dataSelect.value;
+            dataSelect.innerHTML = '';
+            
+            dataSelect.add(new Option("All Configurations", "all"));
+            
+            const keys = Object.keys(historyData[runIdx].data);
+            keys.forEach(key => {
+                dataSelect.add(new Option(formatLabel(key), key));
+            });
+            
+            if (prevVal === "all" || keys.includes(prevVal)) {
+                dataSelect.value = prevVal;
+            } else {
+                dataSelect.value = "all";
+            }
+        }
+
+        function renderCompare() {
+            const idxA = document.getElementById('runA').value;
+            const idxB = document.getElementById('runB').value;
+            const keyA = document.getElementById('dataA').value;
+            const keyB = document.getElementById('dataB').value;
+            
+            const dataA = historyData[idxA].data;
+            const dataB = historyData[idxB].data;
+            
+            const runInfoA = `Run #${historyData[idxA].id} (${historyData[idxA].commit.substring(0,7)})`;
+            const runInfoB = `Run #${historyData[idxB].id} (${historyData[idxB].commit.substring(0,7)})`;
+            
+            let keysToRender = [];
+            if (keyB === 'all') {
+                keysToRender = Object.keys(dataB);
+            } else {
+                keysToRender = [keyB];
+            }
+            
+            const grid = document.getElementById('compareGrid');
+            grid.innerHTML = '';
+            
+            keysToRender.forEach(renderKeyB => {
+                const b = dataB[renderKeyB];
+                
+                let targetKeyA = renderKeyB;
+                let explicitCrossCompare = false;
+                
+                if (keyA !== 'all') {
+                    targetKeyA = keyA; 
+                    explicitCrossCompare = (targetKeyA !== renderKeyB);
+                } else if (keyB === 'all' && !dataA[renderKeyB]) {
+                    const keysA = Object.keys(dataA);
+                    if (keysA.length === 1) {
+                        targetKeyA = keysA[0];
+                    } else if (keysA.length > 0) {
+                        const partsB = renderKeyB.split('_');
+                        let bestMatch = keysA[0];
+                        let maxScore = -1;
+                        keysA.forEach(kA => {
+                            const partsA = kA.split('_');
+                            let score = 0;
+                            for(let i=1; i<partsA.length; i++) {
+                                if (partsA[i] === partsB[i]) score++;
+                            }
+                            if (score > maxScore) {
+                                maxScore = score;
+                                bestMatch = kA;
+                            }
+                        });
+                        targetKeyA = bestMatch;
+                    }
+                    explicitCrossCompare = (targetKeyA !== renderKeyB);
+                }
+                
+                const a = dataA[targetKeyA] || null;
+                
+                let diffHtml = '';
+                if (a) {
+                    const diffTime = a.avg_time_ms !== undefined ? (b.avg_time_ms - a.avg_time_ms).toFixed(2) : null;
+                    const diffQueries = a.avg_queries !== undefined ? (b.avg_queries - a.avg_queries) : null;
+                    const diffMemory = a.avg_memory_mb !== undefined ? (b.avg_memory_mb - a.avg_memory_mb).toFixed(1) : null;
+                    
+                    const formatDiff = (val, suffix) => {
+                        if (val === null) return `<span style="color:var(--text-muted)">N/A</span>`;
+                        const num = parseFloat(val);
+                        if (num === 0) return `<span style="color:var(--text-muted)">0 ${suffix}</span>`;
+                        const sign = num > 0 ? '+' : '';
+                        const colorClass = num < 0 ? 'diff-positive' : 'diff-negative';
+                        return `<span class="${colorClass}" style="font-weight: 800;">${sign}${val} ${suffix}</span>`;
+                    };
+                    
+                    diffHtml = `<div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">`;
+                    
+                    if (diffTime !== null) {
+                        diffHtml += `
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span>Response Time Delta:</span>
+                                <span style="font-size: 1.1rem;">${formatDiff(diffTime, 'ms')}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span>Queries Executed Delta:</span>
+                                <span style="font-size: 1.1rem;">${formatDiff(diffQueries, '')}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span>Peak Memory Delta:</span>
+                                <span style="font-size: 1.1rem;">${formatDiff(diffMemory, 'MB')}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 0.9rem; color: var(--text-muted); margin-top: 15px;">
+                                <span>Baseline ${explicitCrossCompare ? `(${formatLabel(targetKeyA)})` : `[${runInfoA}]`} Response Time:</span>
+                                <span>${a.avg_time_ms} ms</span>
+                            </div>
+                        `;
+                    }
+                    
+                    if (b.frontend && a.frontend) {
+                        const diffFcp = (b.frontend.avg_fcp_ms - a.frontend.avg_fcp_ms).toFixed(0);
+                        const diffDom = (b.frontend.avg_dom_ready_ms - a.frontend.avg_dom_ready_ms).toFixed(0);
+                        const diffLoad = (b.frontend.avg_load_time_ms - a.frontend.avg_load_time_ms).toFixed(0);
+                        
+                        diffHtml += `
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px; margin-top: 15px; color: var(--flarum-blue);">
+                                <strong>Frontend Playwright Delta</strong>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span>FCP Delta:</span>
+                                <span style="font-size: 1.1rem;">${formatDiff(diffFcp, 'ms')}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span>DOM Ready Delta:</span>
+                                <span style="font-size: 1.1rem;">${formatDiff(diffDom, 'ms')}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span>Full Load Delta:</span>
+                                <span style="font-size: 1.1rem;">${formatDiff(diffLoad, 'ms')}</span>
+                            </div>
+                        `;
+                    }
+                    
+                    diffHtml += `</div>`;
+                } else {
+                    diffHtml = `<div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 0.9rem; text-align: center;">No matching configuration in Run A to compare against.</div>`;
+                }
+                
+                let queryRowsHtml = '';
+                const queriesA = a ? (a.queries || {}) : {};
+                const queriesB = b ? (b.queries || {}) : {};
+                const allSql = new Set([...Object.keys(queriesA), ...Object.keys(queriesB)]);
+                
+                if (allSql.size > 0) {
+                    const sqlArray = Array.from(allSql).map(sql => {
+                        const qA = queriesA[sql] || { count: 0, time_ms: 0 };
+                        const qB = queriesB[sql] || { count: 0, time_ms: 0 };
+                        return { sql, qA, qB, diffCount: qB.count - qA.count, diffTime: qB.time_ms - qA.time_ms };
+                    });
+                    
+                    // Sort by highest time in B, then A
+                    sqlArray.sort((x, y) => Math.max(y.qB.time_ms, y.qA.time_ms) - Math.max(x.qB.time_ms, x.qA.time_ms));
+                    
+                    queryRowsHtml = sqlArray.map(item => {
+                        const countStr = a 
+                            ? `${item.qA.count} &rarr; ${item.qB.count}`
+                            : `${item.qB.count}`;
+                            
+                        const timeStr = a
+                            ? `${item.qA.time_ms.toFixed(2)}ms &rarr; ${item.qB.time_ms.toFixed(2)}ms`
+                            : `${item.qB.time_ms.toFixed(2)}ms`;
+                            
+                        let colorStyle = "";
+                        if (a) {
+                            if (item.diffCount > 0) colorStyle = "color: var(--flarum-orange);";
+                            else if (item.diffCount < 0) colorStyle = "color: #10b981;"; // Green
+                        }
+                        
+                        return `
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.2s;" onmouseenter="this.querySelector('.copy-btn').style.opacity='1'" onmouseleave="this.querySelector('.copy-btn').style.opacity='0'">
+                            <td style="padding: 12px 12px; position: relative;">
+                                <div style="max-height: 80px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; font-family: monospace; font-size: 0.75rem; color: #a1a1aa; padding-right: 28px;">${item.sql}</div>
+                                <button class="copy-btn" onclick="navigator.clipboard.writeText(this.previousElementSibling.innerText); const old = this.innerHTML; this.innerHTML='<svg width=&quot;14&quot; height=&quot;14&quot; viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;#10b981&quot; stroke-width=&quot;2&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;><polyline points=&quot;20 6 9 17 4 12&quot;></polyline></svg>'; setTimeout(() => this.innerHTML=old, 2000)" style="position: absolute; right: 4px; top: 12px; background: rgba(30,30,36,0.95); border: 1px solid rgba(255,255,255,0.1); color: #a1a1aa; border-radius: 6px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity 0.2s, background 0.2s, color 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.15)'; this.style.color='#fff';" onmouseout="this.style.background='rgba(30,30,36,0.95)'; this.style.color='#a1a1aa';" title="Copy SQL">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                            </td>
+                            <td style="padding: 12px 16px; text-align: right; font-weight: 700; vertical-align: top; white-space: nowrap; ${colorStyle}">${countStr}</td>
+                            <td style="padding: 12px 16px; text-align: right; vertical-align: top; white-space: nowrap;">${timeStr}</td>
+                        </tr>
+                        `;
+                    }).join('');
+                }
+
+                grid.innerHTML += `
+                    <div class="card">
+                        <h2 style="font-size: 1rem; line-height: 1.4; display: block;">
+                            ${explicitCrossCompare ? 
+                                `
+                                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Baseline (${runInfoA})</div>
+                                <div style="color: var(--text-main); font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;"><span style="display:inline-block;width:8px;height:8px;background:var(--flarum-orange);border-radius:50%;"></span>${formatLabel(targetKeyA)}</div>
+                                
+                                <div style="color: var(--flarum-orange); font-size: 0.75rem; font-weight: 800; text-transform: uppercase; margin-bottom: 4px;">VS Target (${runInfoB})</div>
+                                <div style="color: var(--text-main); font-weight: 700; display: flex; align-items: center; gap: 8px;"><span style="display:inline-block;width:8px;height:8px;background:var(--accent-blue);border-radius:50%;"></span>${formatLabel(renderKeyB)}</div>
+                                ` 
+                                : 
+                                `
+                                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Configuration</div>
+                                <div style="color: var(--text-main); font-weight: 700; display: flex; align-items: center; gap: 8px;"><span style="display:inline-block;width:8px;height:8px;background:var(--flarum-orange);border-radius:50%;"></span>${formatLabel(renderKeyB)}</div>
+                                `
+                            }
+                        </h2>
+                        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 20px;">
+                            ${b.avg_time_ms !== undefined ? `
+                            <div style="display: flex; justify-content: space-between; font-size: 1.1rem;">
+                                <span style="color: var(--text-muted)">Target ${explicitCrossCompare ? '' : `[${runInfoB}] `}Response Time:</span>
+                                <span style="color: var(--accent-blue); font-weight: 800;">${b.avg_time_ms} ms</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: var(--text-muted)">Queries Executed:</span>
+                                <span>${b.avg_queries}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: var(--text-muted)">Peak PHP Memory:</span>
+                                <span>${b.avg_memory_mb} MB</span>
+                            </div>
+                            ` : ''}
+                            ${b.frontend ? `
+                            <div style="display: flex; justify-content: space-between; font-size: 1.1rem; margin-top: ${b.avg_time_ms !== undefined ? '10px' : '0'};">
+                                <span style="color: var(--text-muted)">Target ${explicitCrossCompare ? '' : `[${runInfoB}] `}FCP:</span>
+                                <span style="color: var(--flarum-blue); font-weight: 800;">${b.frontend.avg_fcp_ms} ms</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: var(--text-muted)">DOM Ready:</span>
+                                <span>${b.frontend.avg_dom_ready_ms} ms</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: var(--text-muted)">Full Load:</span>
+                                <span>${b.frontend.avg_load_time_ms} ms</span>
+                            </div>
+                            ` : ''}
+                        </div>
+                        ${diffHtml}
+                        
+                        ${b.lighthouse || (a && a.lighthouse) ? `
+                            <div style="margin-top: 20px; display: flex; gap: 10px;">
+                                ${a && a.lighthouse ? `
+                                <a href="${a.lighthouse}" target="_blank" style="flex: 1; display: inline-block; background: rgba(231, 103, 46, 0.15); border: 1px solid rgba(231, 103, 46, 0.4); color: #e7672e; text-decoration: none; padding: 10px 15px; border-radius: 6px; font-weight: 600; font-size: 0.9rem; text-align: center; transition: background 0.2s, color 0.2s;" onmouseover="this.style.background='rgba(231, 103, 46, 0.25)'; this.style.color='#f97316'" onmouseout="this.style.background='rgba(231, 103, 46, 0.15)'; this.style.color='#e7672e'">
+                                    <svg style="vertical-align: middle; margin-right: 6px; margin-top: -2px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                    Baseline Lighthouse
+                                </a>
+                                ` : ''}
+                                ${b.lighthouse ? `
+                                <a href="${b.lighthouse}" target="_blank" style="flex: 1; display: inline-block; background: rgba(6, 182, 212, 0.15); border: 1px solid rgba(6, 182, 212, 0.4); color: #06b6d4; text-decoration: none; padding: 10px 15px; border-radius: 6px; font-weight: 600; font-size: 0.9rem; text-align: center; transition: background 0.2s, color 0.2s;" onmouseover="this.style.background='rgba(6, 182, 212, 0.25)'; this.style.color='#22d3ee'" onmouseout="this.style.background='rgba(6, 182, 212, 0.15)'; this.style.color='#06b6d4'">
+                                    <svg style="vertical-align: middle; margin-right: 6px; margin-top: -2px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                    Target Lighthouse
+                                </a>
+                                ` : ''}
+                            </div>
+                        ` : ''}
+                        
+                        ${queryRowsHtml ? `
+                            <h4 style="margin-top: 25px; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">Query Inspector</h4>
+                            <div style="overflow-x: auto; max-height: 250px; overflow-y: auto; margin-top: 10px; border-radius: 4px; background: rgba(0,0,0,0.2);">
+                                <table style="width: 100%; text-align: left; font-size: 0.8rem; color: var(--text-muted); border-collapse: collapse;">
+                                    <thead style="position: sticky; top: 0; background: #1e1e24; z-index: 1; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                                        <tr>
+                                            <th style="padding: 12px 12px; font-weight: 600;">Target SQL</th>
+                                            <th style="padding: 12px 16px; text-align: right; font-weight: 600;">Count</th>
+                                            <th style="padding: 12px 16px; text-align: right; font-weight: 600;">Time</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${queryRowsHtml}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            });
+        }
+    </script>
+</body>
+</html>
