@@ -98,6 +98,19 @@ on:
           - backend
           - frontend
           - both
+      lighthouse:
+        description: 'Generate Lighthouse Report'
+        required: false
+        default: true
+        type: boolean
+      lighthouse-device:
+        description: 'Lighthouse Device Profile'
+        required: false
+        default: 'desktop'
+        type: choice
+        options:
+          - desktop
+          - mobile
       custom-matrix:
         description: 'Advanced: Custom Matrix Override (JSON)'
         required: false
@@ -211,6 +224,16 @@ on:
         description: 'Type of Benchmark (backend, frontend, both)'
         required: false
         default: 'backend'
+        type: string
+      lighthouse:
+        description: 'Generate Lighthouse Report'
+        required: false
+        default: true
+        type: boolean
+      lighthouse-device:
+        description: 'Lighthouse Device Profile'
+        required: false
+        default: 'desktop'
         type: string
       custom-matrix:
         description: 'Advanced: Custom Matrix Override (JSON)'
@@ -494,6 +517,8 @@ jobs:
           SHOW_RESPONSE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_SHOW_RESPONSE) || inputs.show-response || 'false' }}"
           CLEAR_CACHE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_CLEAR_CACHE) || inputs.clear-cache || 'true' }}"
           WARMUP="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_WARMUP) || inputs.warmup || 'true' }}"
+          LIGHTHOUSE_ENABLE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_LIGHTHOUSE_ENABLE) || inputs.lighthouse || 'true' }}"
+          LIGHTHOUSE_DEVICE="${{ (inputs.use-repo-vars == true && vars.BENCHMARK_LIGHTHOUSE_DEVICE) || inputs.lighthouse-device || 'desktop' }}"
           
           TARGET_TYPE="${{ matrix.target_type || 'api' }}"
           TARGET_VALUE="${{ matrix.target_value || matrix.endpoint }}"
@@ -603,15 +628,26 @@ jobs:
             # Run the script
             TARGET_URL="http://127.0.0.1:8000" ITERATIONS="$ITERATIONS" JSON_OUT="$FRONTEND_FILE" node ../scripts/frontend-benchmark.js
             
-            # Run Lighthouse in desktop mode
-            echo "Running Google Lighthouse Audit..."
-            npm install -g lighthouse > /dev/null 2>&1
-            lighthouse "http://127.0.0.1:8000" \
-              --output html \
-              --output-path "$LIGHTHOUSE_FILE" \
-              --preset=desktop \
-              --throttling-method=provided \
-              --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage"
+            # Run Lighthouse conditionally
+            if [ "$LIGHTHOUSE_ENABLE" == "true" ]; then
+              echo "Running Google Lighthouse Audit ($LIGHTHOUSE_DEVICE)..."
+              npm install -g lighthouse > /dev/null 2>&1
+              
+              if [ "$LIGHTHOUSE_DEVICE" == "desktop" ]; then
+                PRESET_FLAG="--preset=desktop"
+              else
+                PRESET_FLAG=""
+              fi
+              
+              lighthouse "http://127.0.0.1:8000" \
+                --output html \
+                --output-path "$LIGHTHOUSE_FILE" \
+                $PRESET_FLAG \
+                --throttling-method=provided \
+                --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage"
+            else
+              echo "Lighthouse generation disabled. Skipping."
+            fi
             
             # Kill server
             kill $PHP_SERVER_PID || true

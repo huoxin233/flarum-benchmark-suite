@@ -87,6 +87,8 @@ If the `Override inputs with Repository Variables` toggle is checked (which is t
 - `BENCHMARK_POSTS` (e.g. `'["1000", "50000"]'`)
 - `BENCHMARK_DEPLOY_DASHBOARD` (e.g. `"true"`)
 - `BENCHMARK_CLEAR_HISTORY` (e.g. `"false"`)
+- `BENCHMARK_LIGHTHOUSE_ENABLE` (e.g. `"true"`)
+- `BENCHMARK_LIGHTHOUSE_DEVICE` (e.g. `"desktop"` or `"mobile"`)
 
 ### 🛠️ Advanced (Testing PRs & Dev Versions)
 You can test specific forks, branches, or PRs of ANY Flarum extension (including the benchmark tool itself) by passing a JSON object to `VCS_REPOS` (or the `vcs-repos` UI input).
